@@ -1354,13 +1354,21 @@ with tab7:
                         stock_prom = stock_actual.mean()
                         mes_actual_lbl = bal[bal["orden"]==ultimo_mes_bal]["ml"].iloc[0]
 
+                        # Utilización por potrero: consumo acumulado / producción acumulada
+                        util_pot = bal.groupby(["campo","potrero"]).agg(
+                            prod_total=("prod_kgMS","sum"),
+                            cons_total=("cons_kgMS","sum")
+                        ).reset_index()
+                        util_pot["utilizacion"] = (util_pot["cons_total"] / util_pot["prod_total"].replace(0, np.nan)) * 100
+                        util_prom = util_pot["utilizacion"].mean()
+
                         sk1, sk2, sk3, sk4 = st.columns(4)
                         sk1.metric(f"Stock Total ({lbl_stk})", fnum(stock_total))
                         sk2.metric("Potreros con stock", str(pots_positivo),
                                    delta=f"{pots_deficit} en déficit" if pots_deficit > 0 else None,
                                    delta_color="inverse" if pots_deficit > 0 else "off")
                         sk3.metric(f"Stock Prom./potrero ({lbl_stk})", fnum(stock_prom))
-                        sk4.metric("Último mes", mes_actual_lbl)
+                        sk4.metric("Utilización Promedio", f"{util_prom:.1f}%".replace(".",","))
 
                         st.markdown("---")
 
@@ -1463,6 +1471,10 @@ with tab7:
                         col_stock_ha = f"Stock/ha ({lbl_stk})"
                         pivot_stk[col_stock_ha] = pivot_stk[col_stock_total] / pivot_stk["sup_util"].replace(0, np.nan)
                         pivot_stk = pivot_stk.drop(columns=["sup_util"])
+                        # Traer utilización por potrero
+                        pivot_stk = pivot_stk.merge(util_pot[["campo","potrero","utilizacion"]], on=["campo","potrero"], how="left")
+                        col_util = "Utilización (%)"
+                        pivot_stk = pivot_stk.rename(columns={"utilizacion": col_util})
                         pivot_stk["campo"] = pivot_stk["campo"].map(lambda x: NOMBRE_CAMPOS.get(x, x))
                         pivot_stk = pivot_stk.set_index(["campo","potrero"])
                         pivot_stk.index.names = ["Campo","Potrero"]
@@ -1472,7 +1484,8 @@ with tab7:
                             if val < 0: return "background-color: #FFCDD2; color: #B71C1C;"
                             return ""
 
-                        fmt_stk = {c: lambda x: fnum(x,0) for c in pivot_stk.columns}
+                        fmt_stk = {c: lambda x: fnum(x,0) for c in pivot_stk.columns if c != col_util}
+                        fmt_stk[col_util] = lambda x: f"{x:.1f}%".replace(".",",") if not pd.isna(x) else "—"
                         st.dataframe(
                             pivot_stk.style
                                 .format(fmt_stk, na_rep="—")
