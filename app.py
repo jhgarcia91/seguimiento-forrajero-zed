@@ -1620,9 +1620,15 @@ with tab7:
                                 hovertemplate="Con senesc: %{y:,.0f}<extra></extra>"
                             ))
 
-                            fig_proy.add_vline(
-                                x=last_real_lbl, line_dash="dot", line_color="#999",
-                                annotation_text="Último dato", annotation_position="top"
+                            fig_proy.add_shape(
+                                type="line", x0=last_real_lbl, x1=last_real_lbl,
+                                y0=0, y1=1, yref="paper",
+                                line=dict(color="#999", width=1.5, dash="dot")
+                            )
+                            fig_proy.add_annotation(
+                                x=last_real_lbl, y=1.06, yref="paper",
+                                text="Último dato", showarrow=False,
+                                font=dict(size=11, color="#999")
                             )
                             fig_proy.add_hline(y=0, line_dash="dash", line_color="#333", line_width=1)
 
