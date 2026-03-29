@@ -1519,6 +1519,7 @@ with tab7:
                             stock_con = stock_last
                             cur_m = mes_last_p
                             cur_a = anio_last_p
+                            crecimiento_activo = False
 
                             for i in range(10):
                                 cur_m += 1
@@ -1529,11 +1530,15 @@ with tab7:
                                 prod_est = prod_hist_avg.get(cur_m, 0)
                                 cons_r = future_cons.get((cur_a, cur_m), 0)
 
-                                # Sin senescencia
+                                # Detectar cuando vuelve el crecimiento
+                                if not crecimiento_activo and prod_est > 0 and cur_m not in MESES_SENESCENCIA:
+                                    crecimiento_activo = True
+
+                                # Sin senescencia (solo se muestra mientras no hay crecimiento)
                                 stock_sin = stock_sin + prod_est - cons_r
 
-                                # Con senescencia (se aplica al stock existente antes de sumar producción)
-                                if cur_m in MESES_SENESCENCIA:
+                                # Con senescencia (se aplica solo si no hay crecimiento activo)
+                                if not crecimiento_activo and cur_m in MESES_SENESCENCIA:
                                     stock_con = stock_con * (1 - TASA_SENESCENCIA)
                                 stock_con = stock_con + prod_est - cons_r
 
@@ -1542,7 +1547,7 @@ with tab7:
                                     "ml": f"{MESES_CORTOS[cur_m]} {str(cur_a)[2:]}",
                                     "prod_est": prod_est / divisor_stk,
                                     "cons_real": cons_r / divisor_stk,
-                                    "stock_sin": stock_sin / divisor_stk,
+                                    "stock_sin": stock_sin / divisor_stk if not crecimiento_activo else None,
                                     "stock_con": stock_con / divisor_stk,
                                 })
 
@@ -1601,23 +1606,25 @@ with tab7:
                                 hovertemplate="Stock: %{y:,.0f}<extra></extra>"
                             ))
 
-                            # Projected stock without senescence (connects from last real)
-                            fig_proy.add_trace(go.Scatter(
-                                x=[last_real_lbl] + df_proy["ml"].tolist(),
-                                y=[last_stock_u] + df_proy["stock_sin"].tolist(),
-                                mode="lines+markers", name="Sin senescencia",
-                                line=dict(color="#1976D2", width=2, dash="dash"),
-                                marker=dict(size=6, color="#fff", line=dict(color="#1976D2", width=2)),
-                                hovertemplate="Sin senesc: %{y:,.0f}<extra></extra>"
-                            ))
-                            # Projected stock with senescence
+                            # Projected stock without senescence (only while no growth)
+                            df_sin = df_proy[df_proy["stock_sin"].notna()].copy()
+                            if not df_sin.empty:
+                                fig_proy.add_trace(go.Scatter(
+                                    x=[last_real_lbl] + df_sin["ml"].tolist(),
+                                    y=[last_stock_u] + df_sin["stock_sin"].tolist(),
+                                    mode="lines+markers", name="Sin senescencia",
+                                    line=dict(color="#1976D2", width=2, dash="dash"),
+                                    marker=dict(size=6, color="#fff", line=dict(color="#1976D2", width=2)),
+                                    hovertemplate="Sin senesc: %{y:,.0f}<extra></extra>"
+                                ))
+                            # Projected stock with senescence (full projection, merges when growth resumes)
                             fig_proy.add_trace(go.Scatter(
                                 x=[last_real_lbl] + df_proy["ml"].tolist(),
                                 y=[last_stock_u] + df_proy["stock_con"].tolist(),
                                 mode="lines+markers", name="Con senescencia",
                                 line=dict(color="#F57C00", width=2, dash="dash"),
                                 marker=dict(size=6, color="#fff", line=dict(color="#F57C00", width=2)),
-                                hovertemplate="Con senesc: %{y:,.0f}<extra></extra>"
+                                hovertemplate="Stock proy: %{y:,.0f}<extra></extra>"
                             ))
 
                             fig_proy.add_shape(
