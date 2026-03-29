@@ -142,7 +142,7 @@ st.markdown("""
     .top-card .t-sub { font-size: 0.8rem; color: #888; }
     .top-card .t-val { font-size: 0.92rem; font-weight: 500; color: #2E7D32; margin-top: 0.15rem; }
     /* === SECTION TITLES === */
-    .section-title { font-size: 0.82rem; font-weight: 500; color: #999; letter-spacing: 0.8px; margin-bottom: 0.6rem; }
+    .section-title { font-size: 1rem; font-weight: 700; color: #999; letter-spacing: 0.8px; margin-bottom: 0.6rem; }
     /* === MAP CARD === */
     .map-card { background: #f8f8f8; border-radius: 12px; padding: 2.5rem 2rem; text-align: center; }
     .map-card .map-icon { width: 64px; height: 64px; background: #E8F5E9; border-radius: 16px; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; font-size: 1.8rem; }
@@ -825,16 +825,16 @@ with tab4:
             nc = NOMBRE_CAMPOS.get(cs,cs)
             c1,c2,c3,c4 = st.columns(4)
             with c1: st.metric("Superficie Total",f"{fnum(ds['superficie'].sum())} ha")
-            with c2: st.metric("Sup. Efectiva",f"{fnum(ds['sup_efec'].sum())} ha")
+            with c2: st.metric("Sup. Útil",f"{fnum(ds['sup_util'].sum())} ha")
             with c3: st.metric("Potreros",f"{len(ds)}")
             with c4: st.metric("% Efectiva",f"{ds['sup_efec'].sum()/ds['superficie'].sum()*100:.1f}%".replace(".",","))
             st.markdown("---")
             cta,cpi = st.columns([3,2])
             with cta:
-                dsh = ds[["potrero","sector","superficie","Monte","Pastura_aj","Renoval_aj","Suelo_Desnudo","sup_efec"]].copy()
-                dsh.columns = ["Potrero","Sector","Superficie","Monte","Pastura","Renoval","Suelo Desnudo","Sup. Efectiva"]
+                dsh = ds[["potrero","sector","superficie","Monte","Pastura_aj","Renoval_aj","Suelo_Desnudo","sup_util","sup_efec"]].copy()
+                dsh.columns = ["Potrero","Sector","Superficie","Monte","Pastura","Renoval","Suelo Desnudo","Sup. Útil","Sup. Efectiva"]
                 # Re-mapear colores con nombres correctos del dict
-                st.dataframe(dsh.style.format({"Superficie": lambda x: fnum(x,0), "Monte": lambda x: fnum(x,1), "Pastura": lambda x: fnum(x,1), "Renoval": lambda x: fnum(x,1), "Suelo Desnudo": lambda x: fnum(x,1), "Sup. Efectiva": lambda x: fnum(x,1)}).background_gradient(subset=["Sup. Efectiva"],cmap="YlGn"), use_container_width=True, height=500)
+                st.dataframe(dsh.style.format({"Superficie": lambda x: fnum(x,0), "Monte": lambda x: fnum(x,1), "Pastura": lambda x: fnum(x,1), "Renoval": lambda x: fnum(x,1), "Suelo Desnudo": lambda x: fnum(x,1), "Sup. Útil": lambda x: fnum(x,1), "Sup. Efectiva": lambda x: fnum(x,1)}).background_gradient(subset=["Sup. Efectiva"],cmap="YlGn"), use_container_width=True, height=500)
             with cpi:
                 st.markdown(f"**Cobertura — {nc}**")
                 tot = {"Monte":ds["Monte"].sum(),"Pastura":ds["Pastura_aj"].sum(),"Renoval":ds["Renoval_aj"].sum(),"Suelo Desnudo":ds["Suelo_Desnudo"].sum()}
