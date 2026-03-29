@@ -818,6 +818,7 @@ with tab4:
     @st.fragment
     def _tab4_render():
         st.markdown('<div class="section-title">MATRIZ DE SUPERFICIES Y COBERTURA</div>', unsafe_allow_html=True)
+        st.caption("**Superficie total:** superficie total del potrero · **Superficie útil:** superficie total descontando el monte · **Superficie efectiva:** superficie útil descontando renoval y suelo desnudo")
         _csup_idx = campos.index(st.session_state["csup"]) if st.session_state["csup"] in campos else 0
         cs = st.selectbox("Campo:", campos, index=_csup_idx, format_func=lambda x:NOMBRE_CAMPOS.get(x,x), key="csup")
         ds = df_clasif[df_clasif["campo"]==cs].copy()
@@ -834,7 +835,7 @@ with tab4:
                 dsh = ds[["potrero","sector","superficie","Monte","Pastura_aj","Renoval_aj","Suelo_Desnudo","sup_util","sup_efec"]].copy()
                 dsh.columns = ["Potrero","Sector","Superficie","Monte","Pastura","Renoval","Suelo Desnudo","Sup. Útil","Sup. Efectiva"]
                 # Re-mapear colores con nombres correctos del dict
-                st.dataframe(dsh.style.format({"Superficie": lambda x: fnum(x,0), "Monte": lambda x: fnum(x,1), "Pastura": lambda x: fnum(x,1), "Renoval": lambda x: fnum(x,1), "Suelo Desnudo": lambda x: fnum(x,1), "Sup. Útil": lambda x: fnum(x,1), "Sup. Efectiva": lambda x: fnum(x,1)}).background_gradient(subset=["Sup. Efectiva"],cmap="YlGn"), use_container_width=True, height=500)
+                st.dataframe(dsh.style.format({"Superficie": lambda x: fnum(x,0), "Monte": lambda x: fnum(x,1), "Pastura": lambda x: fnum(x,1), "Renoval": lambda x: fnum(x,1), "Suelo Desnudo": lambda x: fnum(x,1), "Sup. Útil": lambda x: fnum(x,1), "Sup. Efectiva": lambda x: fnum(x,1)}).background_gradient(subset=["Sup. Efectiva"],cmap="YlGn"), use_container_width=True, height=500, hide_index=True)
             with cpi:
                 st.markdown(f"**Cobertura — {nc}**")
                 tot = {"Monte":ds["Monte"].sum(),"Pastura":ds["Pastura_aj"].sum(),"Renoval":ds["Renoval_aj"].sum(),"Suelo Desnudo":ds["Suelo_Desnudo"].sum()}
