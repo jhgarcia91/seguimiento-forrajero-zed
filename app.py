@@ -1455,6 +1455,191 @@ with tab7:
 
                         st.markdown("---")
 
+                        # --- Proyección de Stock ---
+                        st.markdown("#### 📈 Proyección de Stock")
+                        st.caption("Producción estimada con TC histórica. Consumo real si existe. Senescencia: −20%/mes sobre stock acumulado (Jun-Oct).")
+
+                        MESES_SENESCENCIA = [6, 7, 8, 9, 10]
+                        TASA_SENESCENCIA = 0.20
+
+                        # Determine years from campaign
+                        camp_parts_p = camp_stk_sel.split("/")
+                        anio1_p, anio2_p = int(camp_parts_p[0]), int(camp_parts_p[1])
+
+                        # Real data aggregated (same grouping as evolution)
+                        if pot_evol == "Campo completo":
+                            proy_real = bal.groupby(["mes","orden","ml"]).agg(
+                                prod=("prod_kgMS","sum"), cons=("cons_kgMS","sum"), stock=("stock_kgMS","sum")
+                            ).reset_index().sort_values("orden")
+                            campos_proy = bal["campo"].unique().tolist()
+                        else:
+                            proy_real = bal[bal["potrero"]==pot_evol][["mes","orden","ml","prod_kgMS","cons_kgMS","stock_kgMS"]].copy()
+                            proy_real.columns = ["mes","orden","ml","prod","cons","stock"]
+                            proy_real = proy_real.sort_values("orden")
+                            campos_proy = [bal[bal["potrero"]==pot_evol]["campo"].iloc[0]]
+
+                        if not proy_real.empty and len(proy_real) >= 2:
+                            ultimo_ord_p = proy_real["orden"].max()
+
+                            # Last 2 months of real data (anchor included)
+                            real_show = proy_real[proy_real["orden"] >= ultimo_ord_p - 1].copy()
+
+                            stock_last = float(proy_real[proy_real["orden"]==ultimo_ord_p]["stock"].values[0])
+                            mes_last_p = int(proy_real[proy_real["orden"]==ultimo_ord_p]["mes"].values[0])
+                            anio_last_p = anio1_p if mes_last_p >= 7 else anio2_p
+
+                            # --- Historical production (kgMS total per month) ---
+                            hist_m = mensual[mensual["campo"].isin(campos_proy)].copy()
+                            hist_m = hist_m.merge(
+                                df_clasif[["campo","id_potrero","sup_efec"]].drop_duplicates(),
+                                on=["campo","id_potrero"], how="left"
+                            )
+                            if pot_evol != "Campo completo":
+                                pot_info_p = df_clasif[(df_clasif["campo"].isin(campos_proy)) & (df_clasif["potrero"]==pot_evol)]
+                                if not pot_info_p.empty:
+                                    hist_m = hist_m[hist_m["id_potrero"]==pot_info_p["id_potrero"].iloc[0]]
+
+                            hist_m["prod_hist"] = hist_m["PPNA_m"] * hist_m["sup_efec"]
+                            hist_by_camp_mes = hist_m.groupby(["campania","mes"])["prod_hist"].sum().reset_index()
+                            prod_hist_avg = hist_by_camp_mes.groupby("mes")["prod_hist"].mean().to_dict()
+
+                            # --- Real consumption for future months ---
+                            future_cons = {}
+                            if not dc_stk.empty:
+                                dc_fut = dc_stk.copy()
+                                if pot_evol != "Campo completo":
+                                    dc_fut = dc_fut[dc_fut["potrero"]==pot_evol]
+                                dc_fut_g = dc_fut.groupby(["anio","mes"])["kgMS"].sum()
+                                for (a, m), v in dc_fut_g.items():
+                                    future_cons[(int(a), int(m))] = v
+
+                            # --- Build projection ---
+                            proy_rows = []
+                            stock_sin = stock_last
+                            stock_con = stock_last
+                            cur_m = mes_last_p
+                            cur_a = anio_last_p
+
+                            for i in range(10):
+                                cur_m += 1
+                                if cur_m > 12:
+                                    cur_m = 1
+                                    cur_a += 1
+
+                                prod_est = prod_hist_avg.get(cur_m, 0)
+                                cons_r = future_cons.get((cur_a, cur_m), 0)
+
+                                # Sin senescencia
+                                stock_sin = stock_sin + prod_est - cons_r
+
+                                # Con senescencia (se aplica al stock existente antes de sumar producción)
+                                if cur_m in MESES_SENESCENCIA:
+                                    stock_con = stock_con * (1 - TASA_SENESCENCIA)
+                                stock_con = stock_con + prod_est - cons_r
+
+                                proy_rows.append({
+                                    "mes": cur_m, "anio": cur_a,
+                                    "ml": f"{MESES_CORTOS[cur_m]} {str(cur_a)[2:]}",
+                                    "prod_est": prod_est / divisor_stk,
+                                    "cons_real": cons_r / divisor_stk,
+                                    "stock_sin": stock_sin / divisor_stk,
+                                    "stock_con": stock_con / divisor_stk,
+                                })
+
+                            df_proy = pd.DataFrame(proy_rows)
+
+                            # Labels with year for real months
+                            real_show["ml_a"] = real_show.apply(
+                                lambda r: f"{r['ml']} {str(anio1_p if int(r['mes'])>=7 else anio2_p)[2:]}", axis=1
+                            )
+                            real_show["stock_u"] = real_show["stock"] / divisor_stk
+                            real_show["prod_u"] = real_show["prod"] / divisor_stk
+                            real_show["cons_u"] = real_show["cons"] / divisor_stk
+
+                            last_real_lbl = real_show["ml_a"].iloc[-1]
+                            last_stock_u = float(real_show["stock_u"].iloc[-1])
+
+                            # --- Chart ---
+                            fig_proy = go.Figure()
+
+                            # Real production bars
+                            fig_proy.add_trace(go.Bar(
+                                x=real_show["ml_a"], y=real_show["prod_u"],
+                                name="Producción (real)", marker_color="#66BB6A",
+                                hovertemplate="Prod: %{y:,.0f}<extra></extra>"
+                            ))
+                            # Real consumption bars
+                            fig_proy.add_trace(go.Bar(
+                                x=real_show["ml_a"], y=-real_show["cons_u"],
+                                name="Consumo (real)", marker_color="#EF5350",
+                                customdata=real_show["cons_u"],
+                                hovertemplate="Cons: %{customdata:,.0f}<extra></extra>"
+                            ))
+                            # Projected production bars (semi-transparent)
+                            fig_proy.add_trace(go.Bar(
+                                x=df_proy["ml"], y=df_proy["prod_est"],
+                                name="Producción (estimada)", marker_color="rgba(102,187,106,0.35)",
+                                marker_line=dict(color="#66BB6A", width=1),
+                                hovertemplate="Prod est: %{y:,.0f}<extra></extra>"
+                            ))
+                            # Projected consumption bars (if any real data)
+                            if df_proy["cons_real"].sum() > 0:
+                                fig_proy.add_trace(go.Bar(
+                                    x=df_proy["ml"], y=-df_proy["cons_real"],
+                                    name="Consumo (real)", marker_color="#EF5350",
+                                    showlegend=False,
+                                    customdata=df_proy["cons_real"],
+                                    hovertemplate="Cons: %{customdata:,.0f}<extra></extra>"
+                                ))
+
+                            # Real stock line
+                            fig_proy.add_trace(go.Scatter(
+                                x=real_show["ml_a"], y=real_show["stock_u"],
+                                mode="lines+markers", name="Stock (real)",
+                                line=dict(color="#1976D2", width=3),
+                                marker=dict(size=8, color="#1976D2"),
+                                hovertemplate="Stock: %{y:,.0f}<extra></extra>"
+                            ))
+
+                            # Projected stock without senescence (connects from last real)
+                            fig_proy.add_trace(go.Scatter(
+                                x=[last_real_lbl] + df_proy["ml"].tolist(),
+                                y=[last_stock_u] + df_proy["stock_sin"].tolist(),
+                                mode="lines+markers", name="Sin senescencia",
+                                line=dict(color="#1976D2", width=2, dash="dash"),
+                                marker=dict(size=6, color="#fff", line=dict(color="#1976D2", width=2)),
+                                hovertemplate="Sin senesc: %{y:,.0f}<extra></extra>"
+                            ))
+                            # Projected stock with senescence
+                            fig_proy.add_trace(go.Scatter(
+                                x=[last_real_lbl] + df_proy["ml"].tolist(),
+                                y=[last_stock_u] + df_proy["stock_con"].tolist(),
+                                mode="lines+markers", name="Con senescencia",
+                                line=dict(color="#F57C00", width=2, dash="dash"),
+                                marker=dict(size=6, color="#fff", line=dict(color="#F57C00", width=2)),
+                                hovertemplate="Con senesc: %{y:,.0f}<extra></extra>"
+                            ))
+
+                            fig_proy.add_vline(
+                                x=last_real_lbl, line_dash="dot", line_color="#999",
+                                annotation_text="Último dato", annotation_position="top"
+                            )
+                            fig_proy.add_hline(y=0, line_dash="dash", line_color="#333", line_width=1)
+
+                            titulo_proy = "Campo completo" if pot_evol == "Campo completo" else f"Potrero {pot_evol}"
+                            fig_proy.update_layout(
+                                height=480, template="plotly_white", separators=",.",
+                                title=f"Proyección de Stock — {titulo_proy}",
+                                xaxis=dict(title=""),
+                                yaxis_title=lbl_stk,
+                                barmode="relative",
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title=""),
+                                margin=dict(t=60,b=10)
+                            )
+                            st.plotly_chart(fig_proy, use_container_width=True)
+
+                        st.markdown("---")
+
                         # --- Tabla de stock por potrero y mes ---
                         st.markdown(f"#### 📋 Stock Acumulado por Potrero — Campaña {camp_stk_sel}")
                         tbl_stk = bal[["campo","potrero","ml","stock_kgMS_u","orden"]].copy()
