@@ -502,7 +502,7 @@ def btn_actualizar():
     """Renderiza fila con info + botón actualizar."""
     _ci, _cb = st.columns([5, 1])
     with _ci:
-        st.caption(f"📅 {df_ppna['fecha'].min().strftime('%d/%m/%Y')} → {uf.strftime('%d/%m/%Y')} · {len(campos)} campos · {df_ppna['id_potrero'].nunique()} potreros · Campaña: {camp_act}")
+        st.caption(f"Último dato: {uf.strftime('%d/%m/%Y')} · Campaña: {camp_act}")
     with _cb:
         if st.button("🔄 Actualizar", key=f"refresh_{id(_cb)}"):
             st.cache_data.clear()
