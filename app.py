@@ -1519,7 +1519,6 @@ with tab7:
                             stock_con = stock_last
                             cur_m = mes_last_p
                             cur_a = anio_last_p
-                            crecimiento_activo = False
 
                             for i in range(10):
                                 cur_m += 1
@@ -1530,24 +1529,23 @@ with tab7:
                                 prod_est = prod_hist_avg.get(cur_m, 0)
                                 cons_r = future_cons.get((cur_a, cur_m), 0)
 
-                                # Detectar cuando vuelve el crecimiento
-                                if not crecimiento_activo and prod_est > 0 and cur_m not in MESES_SENESCENCIA:
-                                    crecimiento_activo = True
-
-                                # Sin senescencia (solo se muestra mientras no hay crecimiento)
+                                # Sin senescencia (cálculo siempre, display solo en meses de senescencia)
                                 stock_sin = stock_sin + prod_est - cons_r
 
-                                # Con senescencia (se aplica solo si no hay crecimiento activo)
-                                if not crecimiento_activo and cur_m in MESES_SENESCENCIA:
+                                # Con senescencia (se aplica solo en meses Jun-Oct)
+                                if cur_m in MESES_SENESCENCIA:
                                     stock_con = stock_con * (1 - TASA_SENESCENCIA)
                                 stock_con = stock_con + prod_est - cons_r
+
+                                # Mostrar stock_sin solo en meses de senescencia (donde difiere)
+                                mostrar_sin = cur_m in MESES_SENESCENCIA
 
                                 proy_rows.append({
                                     "mes": cur_m, "anio": cur_a,
                                     "ml": f"{MESES_CORTOS[cur_m]} {str(cur_a)[2:]}",
                                     "prod_est": prod_est / divisor_stk,
                                     "cons_real": cons_r / divisor_stk,
-                                    "stock_sin": stock_sin / divisor_stk if not crecimiento_activo else None,
+                                    "stock_sin": stock_sin / divisor_stk if mostrar_sin else None,
                                     "stock_con": stock_con / divisor_stk,
                                 })
 
