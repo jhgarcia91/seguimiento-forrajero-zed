@@ -1724,10 +1724,30 @@ with tab7:
                                     max_len = max(len(str(cell.value or "")) for cell in col)
                                     ws.column_dimensions[col[0].column_letter].width = min(max_len + 3, 18)
 
-                            # Hoja 1: Stock
+                            # Hoja 1: Stock (todos los campos)
                             ws1 = wb.active
-                            stk_export = pivot_stk.reset_index()
-                            write_sheet(ws1, stk_export, "Stock")
+                            _tbl_all = balance[["campo","potrero","ml","stock_kgMS","orden","prod_kgMS","cons_kgMS"]].copy()
+                            for _c in ["stock_kgMS","prod_kgMS","cons_kgMS"]:
+                                _tbl_all[_c+"_u"] = _tbl_all[_c] / divisor_stk
+                            _pv_all = _tbl_all.pivot_table(index=["campo","potrero"], columns="ml", values="stock_kgMS_u", aggfunc="first")
+                            _co = [MESES_CORTOS[m] for m in ORDEN_MESES if MESES_CORTOS[m] in _pv_all.columns]
+                            _pv_all = _pv_all[_co]
+                            _col_st = f"Stock Total ({lbl_stk})"
+                            _pv_all[_col_st] = _pv_all.iloc[:, -1]
+                            _pv_all = _pv_all.sort_values(_col_st, ascending=False).reset_index()
+                            _pv_all = _pv_all.merge(mapa_stk[["campo","potrero","sup_util"]].drop_duplicates(), on=["campo","potrero"], how="left")
+                            _col_ha = f"Stock/ha ({lbl_stk})"
+                            _pv_all[_col_ha] = _pv_all[_col_st] / _pv_all["sup_util"].replace(0, np.nan)
+                            _pv_all = _pv_all.drop(columns=["sup_util"])
+                            # Utilización
+                            _ut_all = balance.groupby(["campo","potrero"]).agg(
+                                _pt=("prod_kgMS","sum"), _ct=("cons_kgMS","sum")
+                            ).reset_index()
+                            _ut_all["Utilización (%)"] = (_ut_all["_ct"] / _ut_all["_pt"].replace(0, np.nan)) * 100
+                            _pv_all = _pv_all.merge(_ut_all[["campo","potrero","Utilización (%)"]], on=["campo","potrero"], how="left")
+                            _pv_all["campo"] = _pv_all["campo"].map(lambda x: NOMBRE_CAMPOS.get(x, x))
+                            _pv_all = _pv_all.rename(columns={"campo":"Campo","potrero":"Potrero"})
+                            write_sheet(ws1, _pv_all, "Stock")
 
                             # Hoja 2: PPNA Diaria (matriz de Dinámica)
                             pm_exp = mensual[mensual["campania"]==camp_stk_sel].copy()
@@ -1789,15 +1809,15 @@ with tab7:
                                 _TASA_SEN = 0.20
                                 _camp_p = camp_stk_sel.split("/")
                                 _a1, _a2 = int(_camp_p[0]), int(_camp_p[1])
-                                _ult_ord = bal["orden"].max()
-                                _mes_ult = int(bal[bal["orden"]==_ult_ord]["mes"].iloc[0])
+                                _ult_ord = balance["orden"].max()
+                                _mes_ult = int(balance[balance["orden"]==_ult_ord]["mes"].iloc[0])
                                 _anio_ult = _a1 if _mes_ult >= 7 else _a2
 
                                 # Stock último por potrero
-                                _stk_last = bal[bal["orden"]==_ult_ord].groupby(["campo","potrero"])["stock_kgMS"].first().to_dict()
+                                _stk_last = balance[balance["orden"]==_ult_ord].groupby(["campo","potrero"])["stock_kgMS"].first().to_dict()
 
                                 # Producción histórica por potrero y mes
-                                _hist = mensual[mensual["campo"].isin(bal["campo"].unique())].copy()
+                                _hist = mensual[mensual["campo"].isin(balance["campo"].unique())].copy()
                                 _hist = _hist.merge(
                                     df_clasif[["campo","id_potrero","potrero","sup_efec"]].drop_duplicates(),
                                     on=["campo","id_potrero"], how="left"
