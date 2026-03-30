@@ -1854,8 +1854,10 @@ with tab7:
                                 _df_proy_xl = pd.DataFrame(_proy_rows).sort_values(["Campo","Potrero"])
                                 ws6 = wb.create_sheet()
                                 write_sheet(ws6, _df_proy_xl, "Proyección")
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                ws6 = wb.create_sheet()
+                                ws6.title = "Proyección"
+                                ws6.cell(row=1, column=1, value=f"Error al generar proyección: {str(e)}")
 
                             buf = io.BytesIO()
                             wb.save(buf)
