@@ -1706,7 +1706,7 @@ with tab7:
 
                             def write_sheet(ws, df, name):
                                 ws.title = name
-                                for r_idx, row in enumerate(dataframe_to_rows(df, index=True, header=True), 1):
+                                for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
                                     for c_idx, val in enumerate(row, 1):
                                         cell = ws.cell(row=r_idx, column=c_idx, value=val)
                                         if r_idx == 1:
