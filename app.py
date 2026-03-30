@@ -1783,6 +1783,60 @@ with tab7:
                                 ws5 = wb.create_sheet()
                                 write_sheet(ws5, sup_exp, "Superficies")
 
+                            # Hoja 6: Proyección de Stock por potrero
+                            try:
+                                _MESES_SEN = [6, 7, 8, 9, 10]
+                                _TASA_SEN = 0.20
+                                _camp_p = camp_stk_sel.split("/")
+                                _a1, _a2 = int(_camp_p[0]), int(_camp_p[1])
+                                _ult_ord = bal["orden"].max()
+                                _mes_ult = int(bal[bal["orden"]==_ult_ord]["mes"].iloc[0])
+                                _anio_ult = _a1 if _mes_ult >= 7 else _a2
+
+                                # Stock último por potrero
+                                _stk_last = bal[bal["orden"]==_ult_ord].groupby(["campo","potrero"])["stock_kgMS"].first().to_dict()
+
+                                # Producción histórica por potrero y mes
+                                _hist = mensual[mensual["campo"].isin(bal["campo"].unique())].copy()
+                                _hist = _hist.merge(
+                                    df_clasif[["campo","id_potrero","potrero","sup_efec"]].drop_duplicates(),
+                                    on=["campo","id_potrero"], how="left"
+                                )
+                                _hist["_ph"] = _hist["PPNA_m"] * _hist["sup_efec"]
+                                _prod_avg = _hist.groupby(["campo","potrero","mes"])["_ph"].mean().to_dict()
+
+                                # Consumo real por potrero y mes
+                                _cons_lk = {}
+                                if not dc_stk.empty:
+                                    _cg = dc_stk.groupby(["campo","potrero","anio","mes"])["kgMS"].sum()
+                                    for (c, p, a, m), v in _cg.items():
+                                        _cons_lk[(c, p, int(a), int(m))] = v
+
+                                # Construir tabla de proyección
+                                _proy_rows = []
+                                for (cp, pt), si in _stk_last.items():
+                                    stk = si
+                                    row = {"Campo": NOMBRE_CAMPOS.get(cp, cp), "Potrero": pt}
+                                    for j in range(1, 11):
+                                        mx = _mes_ult + j
+                                        ax = _anio_ult
+                                        while mx > 12:
+                                            mx -= 12
+                                            ax += 1
+                                        pr = _prod_avg.get((cp, pt, mx), 0)
+                                        cr = _cons_lk.get((cp, pt, ax, mx), 0)
+                                        if mx in _MESES_SEN:
+                                            stk = stk * (1 - _TASA_SEN)
+                                        stk = stk + pr - cr
+                                        row[f"{MESES_CORTOS[mx]} {str(ax)[2:]}"] = round(stk / divisor_stk, 0)
+                                    _proy_rows.append(row)
+
+                                _df_proy_xl = pd.DataFrame(_proy_rows).sort_values(["Campo","Potrero"])
+                                ws6 = wb.create_sheet()
+                                write_sheet(ws6, _df_proy_xl, "Proyección")
+                            except Exception:
+                                pass
+
                             buf = io.BytesIO()
                             wb.save(buf)
                             buf.seek(0)
