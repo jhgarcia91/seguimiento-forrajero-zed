@@ -1819,7 +1819,7 @@ with tab7:
                                 # Producción histórica por potrero y mes
                                 _hist = mensual[mensual["campo"].isin(balance["campo"].unique())].copy()
                                 _hist = _hist.merge(
-                                    df_clasif[["campo","id_potrero","potrero","sup_efec"]].drop_duplicates(),
+                                    df_clasif[["campo","id_potrero","sup_efec"]].drop_duplicates(),
                                     on=["campo","id_potrero"], how="left"
                                 )
                                 _hist["_ph"] = _hist["PPNA_m"] * _hist["sup_efec"]
