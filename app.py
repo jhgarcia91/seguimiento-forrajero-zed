@@ -301,6 +301,9 @@ def calcular_ppna(df_seg, df_eur, df_era5):
     # Traer EUR por mes
     df = df.merge(df_eur[["campo","mes","EUR"]], on=["campo","mes"], how="left")
     df["PPNA_kgMS_ha_d"] = df["EVI_promedio"] * df["RFA_MJ_m2_dia"] * df["EUR"] * 10
+    # Descartar filas sin PPNA (falta RFA o EUR) para que no contaminen
+    # la integración trapezoidal con NaN
+    df = df.dropna(subset=["PPNA_kgMS_ha_d"])
     return df
 
 def mes_orden(mes): return ORDEN_MESES.index(mes)+1 if mes in ORDEN_MESES else 0
