@@ -1209,7 +1209,7 @@ with tab6:
                         return ""
                     styled_usos = pivot_usos.style.format(lambda x: f"{x:.0f}" if isinstance(x,(int,float)) and x==int(x) else f"{x:.1f}".replace(".",","))
                     if camp_col:
-                        styled_usos = styled_usos.applymap(highlight_cero, subset=[camp_col])
+                        styled_usos = styled_usos.map(highlight_cero, subset=[camp_col])
                     st.dataframe(styled_usos, use_container_width=True, height=450)
 
                     st.markdown("---")
@@ -1685,7 +1685,7 @@ with tab7:
                         st.dataframe(
                             pivot_stk.style
                                 .format(fmt_stk, na_rep="—")
-                                .applymap(color_stock)
+                                .map(color_stock)
                                 .background_gradient(subset=[col_stock_total], cmap="RdYlGn", vmin=pivot_stk[col_stock_total].min(), vmax=pivot_stk[col_stock_total].max()),
                             use_container_width=True,
                             height=500,
