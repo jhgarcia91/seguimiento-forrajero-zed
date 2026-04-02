@@ -501,13 +501,16 @@ camps = sorted(df_ppna["campania"].unique())
 camp_act = camps[-1] if camps else ""
 
 # === BOTÓN ACTUALIZAR (helper para cada tab) ===
+_btn_counter = 0
 def btn_actualizar():
     """Renderiza fila con info + botón actualizar."""
+    global _btn_counter
+    _btn_counter += 1
     _ci, _cb = st.columns([5, 1])
     with _ci:
         st.caption(f"Último dato: {uf.strftime('%d/%m/%Y')} · Campaña: {camp_act}")
     with _cb:
-        if st.button("🔄 Actualizar", key=f"refresh_{id(_cb)}"):
+        if st.button("🔄 Actualizar", key=f"refresh_{_btn_counter}"):
             st.cache_data.clear()
             st.rerun()
 
