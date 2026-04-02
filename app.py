@@ -500,6 +500,12 @@ campos = sorted(df_ppna["campo"].unique())
 camps = sorted(df_ppna["campania"].unique())
 camp_act = camps[-1] if camps else ""
 
+# Fechas de cobertura por fuente
+_uf_evi = df_seg["fecha"].max()
+_uf_era5 = df_era5["fecha"].max()
+_dias_evi = (pd.Timestamp.now() - _uf_evi).days
+_dias_era5 = (pd.Timestamp.now() - _uf_era5).days
+
 # === BOTÓN ACTUALIZAR (helper para cada tab) ===
 _btn_counter = 0
 def btn_actualizar():
@@ -509,6 +515,7 @@ def btn_actualizar():
     _ci, _cb = st.columns([5, 1])
     with _ci:
         st.caption(f"Último dato: {uf.strftime('%d/%m/%Y')} · Campaña: {camp_act}")
+        st.caption(f"🟢 EVI — última imagen: {_uf_evi.strftime('%d/%m/%Y')} (hace {_dias_evi} días) · 🟡 RFA ERA5 — último dato: {_uf_era5.strftime('%d/%m/%Y')} (hace {_dias_era5} días)")
     with _cb:
         if st.button("🔄 Actualizar", key=f"refresh_{_btn_counter}"):
             st.cache_data.clear()
