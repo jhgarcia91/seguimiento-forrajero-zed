@@ -786,7 +786,7 @@ with tab3:
         lbl_ha = "Rac/ha" if es_rac else "kgMS/ha"
         divisor = KGMS_POR_RACION if es_rac else 1
         st.markdown(f"*PPNA acumulada ({lbl_ha}) × Superficie efectiva (ha) = {lbl_u} totales*" + (" · **1 ración = 12 kgMS**" if es_rac else ""))
-        st.caption("PPNA/ha se mide sobre píxeles de pastura y renoval (sup. efectiva). Los kgMS totales = PPNA/ha × sup. efectiva del potrero.")
+        st.caption("PPNA/ha se estima sobre la sup. efectiva (sup. útil menos renoval y suelo desnudo). Los kgMS totales = PPNA/ha × sup. efectiva.")
         _cp_idx = campos.index(st.session_state["cp"]) if st.session_state["cp"] in campos else 0
         cp = st.selectbox("Campo:", campos, index=_cp_idx, format_func=lambda x:NOMBRE_CAMPOS.get(x,x), key="cp")
         dp = acum_pot_sup[(acum_pot_sup["campo"]==cp)&(acum_pot_sup["campania"]==camp_act)].copy()
@@ -824,7 +824,7 @@ with tab3:
                 fr.update_layout(height=max(450,len(ds)*22),template="plotly_white",xaxis_title=f"{lbl_u} totales",margin=dict(l=0),yaxis=dict(categoryorder="total ascending"),separators=",.")
                 st.plotly_chart(fr, use_container_width=True)
             st.markdown(f"### Detalle por Potrero")
-            st.caption("Sup.Ef. = superficie de pastura+renoval donde se mide el EVI. {lbl_u} Totales = Acum. × Sup.Ef.".format(lbl_u=lbl_u))
+            st.caption("Sup.Ef. = sup. útil menos renoval y suelo desnudo (donde se estima la TC). {lbl_u} Totales = Acum. × Sup.Ef.".format(lbl_u=lbl_u))
             dd = dp[["potrero","sup_efec","val_acum","val_tot"]].copy()
             dd.columns = ["Potrero","Sup.Ef.(ha)",f"Acum.({lbl_ha})",f"{lbl_u} Totales"]
             dd = dd.sort_values(f"{lbl_u} Totales",ascending=False)
@@ -838,7 +838,7 @@ with tab4:
     @st.fragment
     def _tab4_render():
         st.markdown('<div class="section-title">MATRIZ DE SUPERFICIES Y COBERTURA</div>', unsafe_allow_html=True)
-        st.caption("**Superficie total:** superficie total del potrero · **Superficie útil:** superficie total descontando el monte · **Superficie efectiva:** superficie útil descontando renoval y suelo desnudo")
+        st.caption("**Superficie total:** superficie total del potrero · **Superficie útil:** superficie total menos monte/cortinas · **Superficie efectiva:** sup. útil menos renoval y suelo desnudo, sobre la cual se estima la tasa de crecimiento")
         _csup_idx = campos.index(st.session_state["csup"]) if st.session_state["csup"] in campos else 0
         cs = st.selectbox("Campo:", campos, index=_csup_idx, format_func=lambda x:NOMBRE_CAMPOS.get(x,x), key="csup")
         ds = df_clasif[df_clasif["campo"]==cs].copy()
@@ -1268,7 +1268,7 @@ with tab7:
     def _tab7_render():
         st.markdown('<div class="section-title">STOCK FORRAJERO</div>', unsafe_allow_html=True)
         st.caption("Stock = Stock anterior + Producción (PPNA) − Consumo. Acumulado mes a mes a lo largo de la campaña.")
-        st.caption("Producción mensual = PPNA/ha × sup. efectiva (pastura+renoval). Stock/ha = Stock total ÷ sup. útil (superficie que usa el animal). Por eso PPNA/ha y Stock/ha no coinciden: usan superficies distintas.")
+        st.caption("Producción mensual = PPNA/ha × sup. efectiva (sup. útil menos renoval y suelo desnudo). Stock/ha = Stock total ÷ sup. útil (sup. total menos monte/cortinas). Por eso PPNA/ha y Stock/ha no coinciden: usan superficies distintas.")
 
         # Verificar que haya datos de consumo
         if df_consumo.empty:
@@ -1674,7 +1674,7 @@ with tab7:
 
                         # --- Tabla de stock por potrero y mes ---
                         st.markdown(f"#### 📋 Stock Acumulado por Potrero — Campaña {camp_stk_sel}")
-                        st.caption("Stock/ha = Stock total ÷ sup. útil. La producción se calcula con sup. efectiva (pastura+renoval), por eso Stock/ha puede diferir de la PPNA/ha.")
+                        st.caption("Stock/ha = Stock total ÷ sup. útil. La producción se calcula con sup. efectiva (sup. útil menos renoval y suelo desnudo), por eso Stock/ha puede diferir de la PPNA/ha.")
                         tbl_stk = bal[["campo","potrero","ml","stock_kgMS_u","orden"]].copy()
                         pivot_stk = tbl_stk.pivot_table(index=["campo","potrero"], columns="ml", values="stock_kgMS_u", aggfunc="first")
                         col_order_stk = [MESES_CORTOS[m] for m in ORDEN_MESES if MESES_CORTOS[m] in pivot_stk.columns]
@@ -1920,8 +1920,8 @@ with tab7:
                                 r += 1
                                 notas = [
                                     "• Superficie total: superficie total del potrero (ha).",
-                                    "• Superficie útil (sup_util): superficie total menos monte cerrado (ha). Es la superficie que el animal puede utilizar para pastoreo.",
-                                    "• Superficie efectiva (sup_efec): superficie de pastura + renoval, donde se mide el EVI satelital (ha). Es donde se estima la tasa de crecimiento.",
+                                    "• Superficie útil (sup_util): superficie total menos monte/cortinas (ha). Es la superficie que el animal puede utilizar para pastoreo.",
+                                    "• Superficie efectiva (sup_efec): superficie útil menos renoval y suelo desnudo (ha). Es sobre la cual se estima la tasa de crecimiento.",
                                     "",
                                     "CÁLCULO DE PRODUCCIÓN Y STOCK",
                                     "• PPNA (kgMS/ha): productividad primaria neta aérea, estimada por modelo de Monteith (EVI × RFA × EUR × 10). Se expresa por hectárea de superficie efectiva.",
@@ -1957,7 +1957,7 @@ with tab7:
                         st.download_button(
                             label="📥 Descargar reporte completo (Excel)",
                             data=generar_excel_consolidado(),
-                            file_name=f"Reporte_ZED_{camp_stk_sel.replace('/','-')}.xlsx",
+                            file_name=f"Reporte_ZED_{camp_stk_sel.replace('/','-')}_{pd.Timestamp.now().strftime('%d-%m-%Y')}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             use_container_width=True
                         )
