@@ -277,7 +277,9 @@ def cargar_consumo_drive():
             pass
     if not frames:
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
+    df = pd.concat(frames, ignore_index=True)
+    df = df.drop_duplicates(subset=["lote","anio_mes"])
+    return df
 
 # === FUNCIONES DE CÁLCULO ===
 
