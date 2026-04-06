@@ -495,8 +495,8 @@ tc, um, ua, uf = tc_campo_fn(df_ppna)
 
 df_consumo = cargar_consumo_drive()
 
-acum_pot_sup = acum_pot.merge(df_clasif[["campo","id_potrero","sector","potrero","superficie","sup_efec"]], on=["campo","id_potrero"], how="left")
-acum_pot_sup["kgMS_tot"] = acum_pot_sup["PPNA_acum"] * acum_pot_sup["sup_efec"]
+acum_pot_sup = acum_pot.merge(df_clasif[["campo","id_potrero","sector","potrero","superficie","sup_util","sup_efec"]], on=["campo","id_potrero"], how="left")
+acum_pot_sup["kgMS_tot"] = acum_pot_sup["PPNA_acum"] * acum_pot_sup["sup_util"]
 
 campos = sorted(df_ppna["campo"].unique())
 camps = sorted(df_ppna["campania"].unique())
@@ -782,7 +782,7 @@ with tab3:
         lbl_u = "Raciones" if es_rac else "kgMS"
         lbl_ha = "Rac/ha" if es_rac else "kgMS/ha"
         divisor = KGMS_POR_RACION if es_rac else 1
-        st.markdown(f"*PPNA acumulada ({lbl_ha}) × Superficie efectiva (ha) = {lbl_u} totales*" + (" · **1 ración = 12 kgMS**" if es_rac else ""))
+        st.markdown(f"*PPNA acumulada ({lbl_ha}) × Superficie útil (ha) = {lbl_u} totales*" + (" · **1 ración = 12 kgMS**" if es_rac else ""))
         _cp_idx = campos.index(st.session_state["cp"]) if st.session_state["cp"] in campos else 0
         cp = st.selectbox("Campo:", campos, index=_cp_idx, format_func=lambda x:NOMBRE_CAMPOS.get(x,x), key="cp")
         dp = acum_pot_sup[(acum_pot_sup["campo"]==cp)&(acum_pot_sup["campania"]==camp_act)].copy()
@@ -790,11 +790,11 @@ with tab3:
             # Aplicar conversión
             dp["val_acum"] = dp["PPNA_acum"] / divisor
             dp["val_tot"] = dp["kgMS_tot"] / divisor
-            nc = NOMBRE_CAMPOS.get(cp,cp); tk = dp["val_tot"].sum(); pp = dp["val_acum"].mean(); se = dp["sup_efec"].sum()
+            nc = NOMBRE_CAMPOS.get(cp,cp); tk = dp["val_tot"].sum(); pp = dp["val_acum"].mean(); se = dp["sup_util"].sum()
             c1,c2,c3 = st.columns(3)
             with c1: st.metric(f"{lbl_u} Totales",fnum(tk))
             with c2: st.metric(f"Acum. Promedio",f"{fnum(pp)} {lbl_ha}")
-            with c3: st.metric("Sup. Efectiva",f"{fnum(se)} ha")
+            with c3: st.metric("Sup. Útil",f"{fnum(se)} ha")
             st.markdown("---")
             ctr,crk = st.columns([3,2])
             with ctr:
@@ -803,7 +803,7 @@ with tab3:
                 if not dt.empty:
                     ft = px.treemap(dt, path=["sector","potrero"], values="val_tot", color="val_acum",
                         color_continuous_scale=["#B71C1C","#EF5350","#E0E0E0","#66BB6A","#1B5E20"],
-                        color_continuous_midpoint=pp, labels={"val_tot":lbl_u,"val_acum":lbl_ha}, hover_data={"sup_efec":":.1f"})
+                        color_continuous_midpoint=pp, labels={"val_tot":lbl_u,"val_acum":lbl_ha}, hover_data={"sup_util":":.1f"})
                     ft.update_layout(height=550,margin=dict(t=30,l=0,r=0,b=0),separators=",.")
                     st.plotly_chart(ft, use_container_width=True)
             with crk:
@@ -815,15 +815,15 @@ with tab3:
                 for _,r in ds.iterrows():
                     fr.add_trace(go.Bar(y=[r["potrero"]],x=[r["val_tot"]],orientation="h",marker_color=r["color"],
                         text=[fnum(r["val_tot"])],textposition="outside",showlegend=False,
-                        hovertemplate=f"<b>{r['potrero']}</b><br>{lbl_u}: {fnum(r['val_tot'])}<br>{lbl_ha}: {fnum(r['val_acum'])}<br>Sup ef: {fnum(r['sup_efec'])} ha<extra></extra>"))
+                        hovertemplate=f"<b>{r['potrero']}</b><br>{lbl_u}: {fnum(r['val_tot'])}<br>{lbl_ha}: {fnum(r['val_acum'])}<br>Sup út: {fnum(r['sup_util'])} ha<extra></extra>"))
                 fr.add_vline(x=pr,line_dash="dash",line_color="#333",annotation_text=f"Prom: {fnum(pr)}",annotation_position="top")
                 fr.update_layout(height=max(450,len(ds)*22),template="plotly_white",xaxis_title=f"{lbl_u} totales",margin=dict(l=0),yaxis=dict(categoryorder="total ascending"),separators=",.")
                 st.plotly_chart(fr, use_container_width=True)
             st.markdown(f"### Detalle por Potrero")
-            dd = dp[["potrero","sup_efec","val_acum","val_tot"]].copy()
-            dd.columns = ["Potrero","Sup.Ef.(ha)",f"Acum.({lbl_ha})",f"{lbl_u} Totales"]
+            dd = dp[["potrero","sup_util","val_acum","val_tot"]].copy()
+            dd.columns = ["Potrero","Sup.Út.(ha)",f"Acum.({lbl_ha})",f"{lbl_u} Totales"]
             dd = dd.sort_values(f"{lbl_u} Totales",ascending=False)
-            st.dataframe(dd.style.format({"Sup.Ef.(ha)": lambda x: fnum(x,1), f"Acum.({lbl_ha})": lambda x: fnum(x,0), f"{lbl_u} Totales": lambda x: fnum(x,0)}).background_gradient(subset=[f"{lbl_u} Totales"],cmap="YlGn"), use_container_width=True, hide_index=True, height=500)
+            st.dataframe(dd.style.format({"Sup.Út.(ha)": lambda x: fnum(x,1), f"Acum.({lbl_ha})": lambda x: fnum(x,0), f"{lbl_u} Totales": lambda x: fnum(x,0)}).background_gradient(subset=[f"{lbl_u} Totales"],cmap="YlGn"), use_container_width=True, hide_index=True, height=500)
 
     _tab3_render()
 
@@ -1310,11 +1310,11 @@ with tab7:
 
                     # --- Producción mensual por potrero (kgMS totales) ---
                     prod = mensual[mensual["campania"]==camp_stk_sel].copy()
-                    prod = prod.merge(df_clasif[["campo","id_potrero","potrero","sup_efec"]], on=["campo","id_potrero"], how="left", suffixes=("","_cl"))
+                    prod = prod.merge(df_clasif[["campo","id_potrero","potrero","sup_util"]], on=["campo","id_potrero"], how="left", suffixes=("","_cl"))
                     if "potrero_cl" in prod.columns:
                         prod["potrero"] = prod["potrero_cl"]
                         prod = prod.drop(columns=["potrero_cl"])
-                    prod["prod_kgMS"] = prod["PPNA_m"] * prod["sup_efec"]
+                    prod["prod_kgMS"] = prod["PPNA_m"] * prod["sup_util"]
                     prod_m = prod.groupby(["campo","potrero","mes","orden"]).agg(
                         prod_kgMS=("prod_kgMS","sum")
                     ).reset_index()
@@ -1506,7 +1506,7 @@ with tab7:
                             # --- Historical production (kgMS total per month) ---
                             hist_m = mensual[mensual["campo"].isin(campos_proy)].copy()
                             hist_m = hist_m.merge(
-                                df_clasif[["campo","id_potrero","sup_efec"]].drop_duplicates(),
+                                df_clasif[["campo","id_potrero","sup_util"]].drop_duplicates(),
                                 on=["campo","id_potrero"], how="left"
                             )
                             if pot_evol != "Campo completo":
@@ -1514,7 +1514,7 @@ with tab7:
                                 if not pot_info_p.empty:
                                     hist_m = hist_m[hist_m["id_potrero"]==pot_info_p["id_potrero"].iloc[0]]
 
-                            hist_m["prod_hist"] = hist_m["PPNA_m"] * hist_m["sup_efec"]
+                            hist_m["prod_hist"] = hist_m["PPNA_m"] * hist_m["sup_util"]
                             hist_by_camp_mes = hist_m.groupby(["campania","mes"])["prod_hist"].sum().reset_index()
                             prod_hist_avg = hist_by_camp_mes.groupby("mes")["prod_hist"].mean().to_dict()
 
@@ -1780,8 +1780,8 @@ with tab7:
                             # Hoja 3: Distribución
                             dist_exp = acum_pot_sup[acum_pot_sup["campania"]==camp_stk_sel].copy()
                             if not dist_exp.empty:
-                                dist_exp = dist_exp[["campo","potrero","sup_efec","PPNA_acum","kgMS_tot"]].copy()
-                                dist_exp.columns = ["Campo","Potrero","Sup.Ef.(ha)","Acum.(kgMS/ha)","kgMS Totales"]
+                                dist_exp = dist_exp[["campo","potrero","sup_util","PPNA_acum","kgMS_tot"]].copy()
+                                dist_exp.columns = ["Campo","Potrero","Sup.Út.(ha)","Acum.(kgMS/ha)","kgMS Totales"]
                                 dist_exp = dist_exp.sort_values("kgMS Totales", ascending=False)
                                 ws3 = wb.create_sheet()
                                 write_sheet(ws3, dist_exp, "Distribución")
@@ -1834,10 +1834,10 @@ with tab7:
                                 # Producción histórica por potrero y mes
                                 _hist = mensual[mensual["campo"].isin(balance["campo"].unique())].copy()
                                 _hist = _hist.merge(
-                                    df_clasif[["campo","id_potrero","sup_efec"]].drop_duplicates(),
+                                    df_clasif[["campo","id_potrero","sup_util"]].drop_duplicates(),
                                     on=["campo","id_potrero"], how="left"
                                 )
-                                _hist["_ph"] = _hist["PPNA_m"] * _hist["sup_efec"]
+                                _hist["_ph"] = _hist["PPNA_m"] * _hist["sup_util"]
                                 _prod_avg = _hist.groupby(["campo","potrero","mes"])["_ph"].mean().to_dict()
 
                                 # Consumo real por potrero y mes
