@@ -35,8 +35,8 @@ FOLDER_CONFIG      = "1A8LRTxLmhLQb7kM62r9p8OY77ETypYAe"  # BBDD_conf_zed
 FOLDER_ERA5        = "1VM_xBcnH9Vd8tZ2ifqvU_JpeKiZJbx7b"  # BBDD_rfa_zed
 FOLDER_CONSUMO     = "18SwkJcOt7l6h61IdX2WNopd53gcaWLaS"  # BBDD_consumos_zed
 KGMS_POR_RACION    = 12
-FACTOR_PISOTEO     = 1.10
-TASA_SENESCENCIA   = 0.08
+FACTOR_PISOTEO     = 1.15
+TASA_SENESCENCIA   = 0.095
 SHAPEFILE_PATH     = os.path.join(os.path.dirname(__file__), "potreros_combinados_ZED.shp")
 
 @st.cache_data(ttl=3600)
