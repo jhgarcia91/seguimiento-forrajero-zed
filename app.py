@@ -1485,7 +1485,7 @@ with tab7:
                         st.caption("Producción estimada con TC histórica. Consumo real si existe. Senescencia: −20%/mes sobre stock acumulado (Jun-Oct).")
 
                         MESES_SENESCENCIA = [6, 7, 8, 9, 10]
-                        TASA_SENESCENCIA = 0.20
+                        TASA_SEN_PROY = 0.20
 
                         # Determine years from campaign
                         camp_parts_p = camp_stk_sel.split("/")
@@ -1559,7 +1559,7 @@ with tab7:
 
                                 # Con senescencia (se aplica solo en meses Jun-Oct)
                                 if cur_m in MESES_SENESCENCIA:
-                                    stock_con = stock_con * (1 - TASA_SENESCENCIA)
+                                    stock_con = stock_con * (1 - TASA_SEN_PROY)
                                 stock_con = stock_con + prod_est - cons_r
 
                                 # Mostrar stock_sin solo en meses de senescencia (donde difiere)
