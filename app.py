@@ -1,7 +1,8 @@
 """
-SEGUIMIENTO FORRAJERO - ZED  MVP v2.0 - ERA5 + Multi-Campo
+SEGUIMIENTO FORRAJERO - ZED  v2.1 - ERA5 + Multi-Campo + Mapa Stock
 Fusion de logica avanzada (integracion trapezoidal, ERA5 diario, historial)
 sobre la base multi-campo de la version original.
+v2.1: Mapa interactivo de stock por potrero con Folium.
 """
 import streamlit as st
 import pandas as pd
@@ -17,6 +18,11 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+import geopandas as gpd
+import folium
+from streamlit_folium import st_folium
+from branca.colormap import LinearColormap
+import os
 
 st.set_page_config(page_title="Seguimiento Forrajero - ZED", page_icon="🌿", layout="wide", initial_sidebar_state="collapsed")
 
@@ -31,6 +37,16 @@ FOLDER_CONSUMO     = "18SwkJcOt7l6h61IdX2WNopd53gcaWLaS"  # BBDD_consumos_zed
 KGMS_POR_RACION    = 12
 FACTOR_PISOTEO     = 1.10
 TASA_SENESCENCIA   = 0.08
+SHAPEFILE_PATH     = os.path.join(os.path.dirname(__file__), "potreros_combinados_ZED.shp")
+
+@st.cache_data(ttl=3600)
+def cargar_shapefile():
+    """Carga shapefile de potreros y reproyecta a EPSG:4326."""
+    if not os.path.exists(SHAPEFILE_PATH):
+        return None
+    gdf = gpd.read_file(SHAPEFILE_PATH)
+    gdf = gdf.to_crs(epsg=4326)
+    return gdf
 
 def get_drive_service():
     """Connects to Google Drive using service account."""
@@ -545,6 +561,7 @@ tab1,tab2,tab3,tab6,tab7,tab5,tab4,tab8 = st.tabs(["TABLERO","DINÁMICA","DISTRI
 with tab1:
     btn_actualizar()
     st.markdown(f'<div class="section-title">PPNA POR ESTABLECIMIENTO — {MESES_ES.get(um,"")} {ua} · Campaña {camp_act}</div>', unsafe_allow_html=True)
+    st.caption("Información satelital · Tasas de crecimiento diarias")
     cols = st.columns(len(campos))
     for i,campo in enumerate(campos):
         with cols[i]:
@@ -573,6 +590,97 @@ with tab1:
                 <div style="font-size:0.85rem;margin-top:0.3rem;">Hist: {fnum(th,2)} · <span style="color:{c};font-weight:500;">{vt}</span></div>
                 <div style="font-size:0.75rem;color:{c};">{e}</div>
             </div>''', unsafe_allow_html=True)
+
+    # --- STOCK DISPONIBLE ---
+    st.markdown("")
+    st.markdown(f'<div class="section-title">STOCK DISPONIBLE — Campaña {camp_act}</div>', unsafe_allow_html=True)
+
+    # Calcular stock para tablero (misma lógica tab7, campaña actual)
+    _stk_ok = False
+    if not df_consumo.empty and not mensual.empty:
+        if "potrero_al" in df_clasif.columns:
+            _mapa_t1 = df_clasif[["campo","potrero","potrero_al","sup_efec","sup_util","id_potrero"]].dropna(subset=["potrero_al"]).copy()
+            _mapa_t1["potrero_al"] = _mapa_t1["potrero_al"].astype(str).str.strip()
+        elif "potreros_al" in df_clasif.columns:
+            _mapa_t1 = df_clasif[["campo","potrero","potreros_al","sup_efec","sup_util","id_potrero"]].rename(columns={"potreros_al":"potrero_al"}).dropna(subset=["potrero_al"]).copy()
+            _mapa_t1["potrero_al"] = _mapa_t1["potrero_al"].astype(str).str.strip()
+        else:
+            _mapa_t1 = pd.DataFrame()
+
+        if not _mapa_t1.empty:
+            _dc_t1 = df_consumo.copy()
+            _dc_t1["lote"] = _dc_t1["lote"].astype(str).str.strip()
+            _dc_t1 = _dc_t1.merge(_mapa_t1, left_on="lote", right_on="potrero_al", how="inner")
+            _dc_t1 = _dc_t1[_dc_t1["campo"].isin(df_ppna["campo"].unique())]
+
+            if not _dc_t1.empty:
+                _prod_t1 = mensual[mensual["campania"]==camp_act].copy()
+                _prod_t1 = _prod_t1.merge(df_clasif[["campo","id_potrero","potrero","sup_util"]], on=["campo","id_potrero"], how="left", suffixes=("","_cl"))
+                if "potrero_cl" in _prod_t1.columns:
+                    _prod_t1["potrero"] = _prod_t1["potrero_cl"]
+                    _prod_t1 = _prod_t1.drop(columns=["potrero_cl"])
+                _prod_t1["prod_kgMS"] = _prod_t1["PPNA_m"] * _prod_t1["sup_util"]
+                _prod_t1m = _prod_t1.groupby(["campo","potrero","mes","orden"]).agg(prod_kgMS=("prod_kgMS","sum")).reset_index()
+
+                if "campania" not in _dc_t1.columns:
+                    _dc_t1["campania"] = _dc_t1.apply(
+                        lambda r: f"{int(r['anio'])}/{int(r['anio'])+1}" if r["mes"] >= 7 else f"{int(r['anio'])-1}/{int(r['anio'])}", axis=1)
+                _cons_t1 = _dc_t1[_dc_t1["campania"]==camp_act].copy()
+                _cons_t1m = _cons_t1.groupby(["campo","potrero","mes"]).agg(cons_kgMS=("kgMS","sum")).reset_index()
+
+                _all_p = _prod_t1m[["campo","potrero"]].drop_duplicates()
+                _mes_c = _prod_t1m[["mes","orden"]].drop_duplicates().sort_values("orden")
+                _base_t1 = _all_p.merge(_mes_c, how="cross")
+                _bal_t1 = _base_t1.merge(_prod_t1m[["campo","potrero","mes","prod_kgMS"]], on=["campo","potrero","mes"], how="left")
+                _bal_t1 = _bal_t1.merge(_cons_t1m[["campo","potrero","mes","cons_kgMS"]], on=["campo","potrero","mes"], how="left")
+                _bal_t1["prod_kgMS"] = _bal_t1["prod_kgMS"].fillna(0)
+                _bal_t1["cons_kgMS"] = _bal_t1["cons_kgMS"].fillna(0) * FACTOR_PISOTEO
+                _bal_t1 = _bal_t1.sort_values(["campo","potrero","orden"])
+
+                _stk_rows = []
+                for (_cg, _pg), _grp in _bal_t1.groupby(["campo","potrero"]):
+                    _grp = _grp.sort_values("orden")
+                    _stk = 0.0
+                    for _idx, _rw in _grp.iterrows():
+                        _sen = max(_stk, 0) * TASA_SENESCENCIA
+                        _stk = _stk + _rw["prod_kgMS"] - _rw["cons_kgMS"] - _sen
+                        _stk_rows.append({"idx": _idx, "stock_kgMS": _stk})
+                _df_stk_t1 = pd.DataFrame(_stk_rows).set_index("idx")
+                _bal_t1["stock_kgMS"] = _df_stk_t1["stock_kgMS"]
+
+                _ult_ord = _bal_t1["orden"].max()
+                _stk_ult = _bal_t1[_bal_t1["orden"]==_ult_ord][["campo","potrero","stock_kgMS"]].copy()
+                _sup_i = df_clasif[["campo","potrero","sup_util"]].drop_duplicates(subset=["campo","potrero"])
+                _stk_ult = _stk_ult.merge(_sup_i, on=["campo","potrero"], how="left")
+                _stk_ult["stock_ha"] = _stk_ult["stock_kgMS"] / _stk_ult["sup_util"].replace(0, np.nan)
+                _stk_ok = True
+
+    if _stk_ok:
+        _stk_cols = st.columns(len(campos))
+        for i, campo in enumerate(campos):
+            with _stk_cols[i]:
+                n = NOMBRE_CAMPOS.get(campo, campo)
+                _sc = _stk_ult[_stk_ult["campo"]==campo]
+                if _sc.empty:
+                    st.markdown(f'<div class="kpi-card st-green"><div class="label">{n}</div><div class="separator"></div><div style="color:#999;">Sin datos</div></div>', unsafe_allow_html=True)
+                else:
+                    _prom_ha = _sc["stock_ha"].mean()
+                    _prom_rac = _prom_ha / KGMS_POR_RACION
+                    _tot_kg = _sc["stock_kgMS"].sum()
+                    _tot_rac = _tot_kg / KGMS_POR_RACION
+                    st.markdown(f'''<div class="kpi-card st-green">
+                        <div class="label">{n}</div>
+                        <div class="separator"></div>
+                        <div class="section-label">Stock promedio</div>
+                        <div class="value">{fnum(_prom_ha)}</div><div class="subvalue">kgMS/ha</div>
+                        <div class="value" style="font-size:1.3rem;">{fnum(_prom_rac)}</div><div class="subvalue">Raciones/ha</div>
+                        <div class="separator"></div>
+                        <div class="section-label">Stock total</div>
+                        <div class="value">{fnum(_tot_kg)}</div><div class="subvalue">kgMS</div>
+                        <div class="value" style="font-size:1.3rem;">{fnum(_tot_rac)}</div><div class="subvalue">Raciones</div>
+                    </div>''', unsafe_allow_html=True)
+    else:
+        st.info("Sin datos suficientes de consumo para calcular stock.")
 
     # --- MÉTRICAS CLAVE ---
     st.markdown("")
@@ -608,26 +716,6 @@ with tab1:
         st.markdown(f'<div class="metric-card"><div class="mc-label">TC promedio</div><div class="mc-value">{fnum(_tc_prom,1)}</div><div class="mc-sub">kgMS/ha·d</div></div>', unsafe_allow_html=True)
     with _m4:
         st.markdown(f'<div class="metric-card"><div class="mc-label">Cosecha promedio</div><div class="mc-value">{fnum(_cosecha_prom)}</div><div class="mc-sub">kgMS/ha útil</div></div>', unsafe_allow_html=True)
-
-    # --- TOP POTREROS ---
-    st.markdown("")
-    st.markdown('<div class="section-title">TOP POTREROS DEL MES</div>', unsafe_allow_html=True)
-    mk = (df_ppna["fecha"].dt.month==um)&(df_ppna["fecha"].dt.year==ua)
-    pa = df_ppna[mk].groupby(["campo","sector","potrero","id_potrero"])["PPNA_kgMS_ha_d"].mean().reset_index()
-    t3 = pa.nlargest(3,"PPNA_kgMS_ha_d")
-    if not t3.empty:
-        ct = st.columns(3); med_cls = ["gold","silver","bronze"]
-        for i,(_,r) in enumerate(t3.iterrows()):
-            with ct[i]:
-                nc = NOMBRE_CAMPOS.get(r["campo"],r["campo"])
-                st.markdown(f'''<div class="top-card">
-                    <div class="medal {med_cls[i]}">{i+1}</div>
-                    <div>
-                        <div class="t-name">{r["potrero"]}</div>
-                        <div class="t-sub">{nc} · Sector {r["sector"]}</div>
-                        <div class="t-val">{fnum(r["PPNA_kgMS_ha_d"],2)} kgMS/ha·d</div>
-                    </div>
-                </div>''', unsafe_allow_html=True)
 
 # TAB 2
 with tab2:
@@ -1899,18 +1987,208 @@ with tab7:
 
     _tab7_render()
 
-# TAB 8 — MAPA DE VIGOR
+# TAB 8 — MAPA DE STOCK
 with tab8:
     btn_actualizar()
-    st.markdown('<div class="section-title">MAPA DE VIGOR</div>', unsafe_allow_html=True)
-    st.markdown('''<div class="map-card">
-        <div class="map-icon">🌿</div>
-        <div class="map-title">Mapa de Vigor — ZED</div>
-        <div class="map-desc">Visualización en tiempo real del índice de vigor (EVI) por potrero a través de Google Earth Engine.</div>
-    </div>''', unsafe_allow_html=True)
-    st.link_button("🌿 Abrir Mapa de Vigor", "https://ee-josehumbertogarcia91.projects.earthengine.app/view/mapadevigorzedv1", use_container_width=False)
-    st.caption("Se abre en una nueva ventana.")
+    @st.fragment
+    def _tab8_render():
+        st.markdown('<div class="section-title">MAPA DE STOCK DISPONIBLE</div>', unsafe_allow_html=True)
+        st.caption("Stock por potrero sobre imagen satelital. Color relativo al promedio de stock del establecimiento.")
+
+        gdf = cargar_shapefile()
+        if gdf is None:
+            st.warning("No se encontró el shapefile de potreros. Verificá que `potreros_combinados_ZED.shp` (y archivos asociados) estén en la misma carpeta que la app.")
+            return
+
+        # --- Calcular stock (misma lógica que tab7, para última campaña) ---
+        if df_consumo.empty:
+            st.warning("No hay datos de consumo cargados. Se necesitan para calcular el stock.")
+            return
+
+        if "potrero_al" in df_clasif.columns:
+            mapa_stk = df_clasif[["campo","potrero","potrero_al","sup_efec","sup_util","id_potrero"]].dropna(subset=["potrero_al"]).copy()
+            mapa_stk["potrero_al"] = mapa_stk["potrero_al"].astype(str).str.strip()
+        elif "potreros_al" in df_clasif.columns:
+            mapa_stk = df_clasif[["campo","potrero","potreros_al","sup_efec","sup_util","id_potrero"]].rename(columns={"potreros_al":"potrero_al"}).dropna(subset=["potrero_al"]).copy()
+            mapa_stk["potrero_al"] = mapa_stk["potrero_al"].astype(str).str.strip()
+        else:
+            st.warning("No se encontró la columna de equivalencias (potrero_al) en el archivo de áreas.")
+            return
+
+        dc_stk_base = df_consumo.copy()
+        dc_stk_base["lote"] = dc_stk_base["lote"].astype(str).str.strip()
+        dc_stk = dc_stk_base.merge(mapa_stk, left_on="lote", right_on="potrero_al", how="inner")
+        dc_stk = dc_stk[dc_stk["campo"].isin(df_ppna["campo"].unique())]
+
+        if dc_stk.empty or mensual.empty:
+            st.warning("Faltan datos para calcular el stock.")
+            return
+
+        # Usar última campaña
+        camps_stk = sorted(mensual["campania"].unique())
+        camp_sel_mapa = camps_stk[-1] if camps_stk else ""
+
+        # Producción mensual por potrero (kgMS totales)
+        prod = mensual[mensual["campania"]==camp_sel_mapa].copy()
+        prod = prod.merge(df_clasif[["campo","id_potrero","potrero","sup_util","superficie"]], on=["campo","id_potrero"], how="left", suffixes=("","_cl"))
+        if "potrero_cl" in prod.columns:
+            prod["potrero"] = prod["potrero_cl"]
+            prod = prod.drop(columns=["potrero_cl"])
+        prod["prod_kgMS"] = prod["PPNA_m"] * prod["sup_util"]
+        prod_m = prod.groupby(["campo","potrero","mes","orden"]).agg(
+            prod_kgMS=("prod_kgMS","sum")
+        ).reset_index()
+
+        # Consumo mensual
+        if "campania" not in dc_stk.columns:
+            dc_stk["campania"] = dc_stk.apply(
+                lambda r: f"{int(r['anio'])}/{int(r['anio'])+1}" if r["mes"] >= 7 else f"{int(r['anio'])-1}/{int(r['anio'])}", axis=1)
+        cons = dc_stk[dc_stk["campania"]==camp_sel_mapa].copy()
+        cons_m = cons.groupby(["campo","potrero","mes"]).agg(
+            cons_kgMS=("kgMS","sum")
+        ).reset_index()
+
+        # Balance
+        all_pots_stk = prod_m[["campo","potrero"]].drop_duplicates()
+        meses_camp = prod_m[["mes","orden"]].drop_duplicates().sort_values("orden")
+        base = all_pots_stk.merge(meses_camp, how="cross")
+        balance = base.merge(prod_m[["campo","potrero","mes","prod_kgMS"]], on=["campo","potrero","mes"], how="left")
+        balance = balance.merge(cons_m[["campo","potrero","mes","cons_kgMS"]], on=["campo","potrero","mes"], how="left")
+        balance["prod_kgMS"] = balance["prod_kgMS"].fillna(0)
+        balance["cons_kgMS"] = balance["cons_kgMS"].fillna(0) * FACTOR_PISOTEO
+        balance = balance.sort_values(["campo","potrero","orden"])
+
+        # Stock acumulado con senescencia
+        stocks = []
+        for (campo_g, pot_g), grp in balance.groupby(["campo","potrero"]):
+            grp = grp.sort_values("orden")
+            stock = 0.0
+            for idx, row in grp.iterrows():
+                sen = max(stock, 0) * TASA_SENESCENCIA
+                stock = stock + row["prod_kgMS"] - row["cons_kgMS"] - sen
+                stocks.append({"idx": idx, "senesc_kgMS": sen, "stock_kgMS": stock})
+        df_stocks_map = pd.DataFrame(stocks).set_index("idx")
+        balance["stock_kgMS"] = df_stocks_map["stock_kgMS"]
+
+        # Stock del último mes por potrero
+        ultimo_mes_ord = balance["orden"].max()
+        stock_ult = balance[balance["orden"]==ultimo_mes_ord][["campo","potrero","stock_kgMS"]].copy()
+
+        # Merge con sup_util del clasif para calcular stock/ha y raciones
+        sup_info = df_clasif[["campo","potrero","id_potrero","sup_util","superficie"]].drop_duplicates(subset=["campo","potrero"])
+        stock_ult = stock_ult.merge(sup_info, on=["campo","potrero"], how="left")
+        stock_ult["stock_ha"] = stock_ult["stock_kgMS"] / stock_ult["sup_util"].replace(0, np.nan)
+        stock_ult["raciones"] = (stock_ult["stock_kgMS"] / KGMS_POR_RACION)
+
+        # Merge con shapefile por id_potrero
+        gdf_map = gdf.merge(stock_ult, on=["campo","potrero"], how="inner", suffixes=("","_stk"))
+
+        if gdf_map.empty:
+            st.warning("No se pudo cruzar el shapefile con los datos de stock. Verificá que los nombres de campo/potrero coincidan.")
+            return
+
+        # Promedio por campo y desvío
+        promedios = gdf_map.groupby("campo")["stock_ha"].mean()
+        gdf_map["promedio_campo"] = gdf_map["campo"].map(promedios)
+        gdf_map["desvio_pct"] = ((gdf_map["stock_ha"] - gdf_map["promedio_campo"]) / gdf_map["promedio_campo"].replace(0, np.nan) * 100)
+
+        # Filtro campo
+        campos_mapa = sorted(gdf_map["campo"].unique())
+        sel_campo_mapa = st.selectbox("Establecimiento", ["Todos"] + [NOMBRE_CAMPOS.get(c,c) for c in campos_mapa], key="campo_tab8")
+
+        gdf_show = gdf_map.copy()
+        if sel_campo_mapa != "Todos":
+            campo_key_mapa = next((c for c in campos_mapa if NOMBRE_CAMPOS.get(c,c) == sel_campo_mapa), None)
+            if campo_key_mapa:
+                gdf_show = gdf_show[gdf_show["campo"] == campo_key_mapa]
+
+        if gdf_show.empty:
+            st.warning("Sin datos para la selección.")
+            return
+
+        # Mes label
+        mes_lbl_mapa = MESES_CORTOS.get(int(balance[balance["orden"]==ultimo_mes_ord]["mes"].iloc[0]), "")
+
+        # Colormap divergente
+        colormap = LinearColormap(
+            colors=["#d32f2f", "#f57f17", "#fdd835", "#7cb342", "#2e7d32"],
+            vmin=-80, vmax=80,
+            caption=f"Stock relativo al promedio del campo — {mes_lbl_mapa} {camp_sel_mapa}"
+        )
+
+        # Centro del mapa
+        bounds = gdf_show.total_bounds
+        center_lat = (bounds[1] + bounds[3]) / 2
+        center_lon = (bounds[0] + bounds[2]) / 2
+        zoom = 12 if sel_campo_mapa != "Todos" else 10
+
+        m = folium.Map(
+            location=[center_lat, center_lon],
+            zoom_start=zoom,
+            tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            attr="Esri World Imagery"
+        )
+
+        for _, row in gdf_show.iterrows():
+            stock_ha = row["stock_ha"]
+            stock_total = row["stock_kgMS"]
+            raciones = row["raciones"]
+            sup_util_val = row.get("sup_util", 0) or 0
+            sup_total_val = row.get("superficie", 0) or 0
+            desvio = row["desvio_pct"] if pd.notna(row["desvio_pct"]) else 0
+            color = colormap(np.clip(desvio, -80, 80))
+            campo_label = NOMBRE_CAMPOS.get(row["campo"], row["campo"])
+            pot_label = row.get("potrero_al", row["potrero"])
+
+            popup_html = f"""
+            <div style="font-family: Arial; font-size: 13px; min-width: 230px;">
+                <b style="font-size: 14px;">{pot_label}</b><br>
+                <hr style="margin: 4px 0;">
+                <b>Campo:</b> {campo_label}<br>
+                <b>Sector:</b> {row.get('sector', '-')}<br>
+                <b>Sup. total:</b> {fnum(sup_total_val)} ha<br>
+                <b>Sup. útil:</b> {fnum(sup_util_val, 1)} ha<br>
+                <hr style="margin: 4px 0;">
+                <div style="background: #f5f5f5; padding: 6px 8px; border-radius: 4px; margin-top: 4px;">
+                    <b style="font-size: 11px; color: #666;">DISPONIBLE</b><br>
+                    <b>Stock/ha: {fnum(stock_ha)} kgMS/ha</b><br>
+                    <b>Stock total: {fnum(stock_total)} kgMS</b><br>
+                    <b>Raciones: {fnum(raciones)}</b>
+                </div>
+            </div>
+            """
+
+            tooltip = f"{pot_label} | {fnum(stock_ha)} kgMS/ha | {fnum(raciones)} rac."
+
+            geojson = folium.GeoJson(
+                row.geometry.__geo_interface__,
+                style_function=lambda x, c=color: {
+                    "fillColor": c,
+                    "color": "#ffffff",
+                    "weight": 1.5,
+                    "fillOpacity": 0.65,
+                },
+                highlight_function=lambda x: {
+                    "weight": 3,
+                    "color": "#ffffff",
+                    "fillOpacity": 0.85,
+                },
+                tooltip=tooltip,
+                popup=folium.Popup(popup_html, max_width=270),
+            )
+            geojson.add_to(m)
+
+        colormap.add_to(m)
+
+        st_folium(m, use_container_width=True, height=650)
+
+        # Link al mapa de vigor como complemento
+        st.markdown("---")
+        st.link_button("🌿 Abrir Mapa de Vigor (GEE)", "https://ee-josehumbertogarcia91.projects.earthengine.app/view/mapadevigorzedv1", use_container_width=False)
+        st.caption("Se abre en una nueva ventana.")
+
+    _tab8_render()
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v2.0 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v2.1 · — DON TITO —</div>', unsafe_allow_html=True)
