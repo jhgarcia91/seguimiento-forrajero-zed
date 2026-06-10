@@ -1,8 +1,10 @@
 """
-SEGUIMIENTO FORRAJERO - ZED  v2.1 - ERA5 + Multi-Campo + Mapa Stock
+SEGUIMIENTO FORRAJERO - ZED  v2.2 - ERA5 + Multi-Campo + Mapa Stock
 Fusion de logica avanzada (integracion trapezoidal, ERA5 diario, historial)
 sobre la base multi-campo de la version original.
 v2.1: Mapa interactivo de stock por potrero con Folium.
+v2.2: Excel con prefijo de fecha de descarga (AAAAMMDD_, hora Argentina) y
+      encabezado "Stock al:" en la hoja Stock (ultima fecha de crecimiento y consumo).
 """
 import streamlit as st
 import pandas as pd
@@ -12,6 +14,8 @@ import plotly.graph_objects as go
 import calendar
 import io
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
@@ -1819,11 +1823,18 @@ with tab7:
                                 bottom=Side(style="thin", color="E0E0E0")
                             )
 
-                            def write_sheet(ws, df, name):
+                            def write_sheet(ws, df, name, top_lines=None):
                                 ws.title = name
+                                offset = 0
+                                if top_lines:
+                                    for i, line in enumerate(top_lines, 1):
+                                        c = ws.cell(row=i, column=1, value=line)
+                                        c.font = Font(bold=True, color="1B5E20", size=11)
+                                    offset = len(top_lines) + 1  # +1 fila en blanco de separación
                                 for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
+                                    rr = r_idx + offset
                                     for c_idx, val in enumerate(row, 1):
-                                        cell = ws.cell(row=r_idx, column=c_idx, value=val)
+                                        cell = ws.cell(row=rr, column=c_idx, value=val)
                                         if r_idx == 1:
                                             cell.font = hdr_font
                                             cell.fill = hdr_fill
@@ -1862,7 +1873,22 @@ with tab7:
                             _pv_all = _pv_all.merge(_ut_all[["campo","potrero","Utilización (%)"]], on=["campo","potrero"], how="left")
                             _pv_all["campo"] = _pv_all["campo"].map(lambda x: NOMBRE_CAMPOS.get(x, x))
                             _pv_all = _pv_all.rename(columns={"campo":"Campo","potrero":"Potrero"})
-                            write_sheet(ws1, _pv_all, "Stock")
+                            # Fechas de últimos datos (para encabezado "Stock al:")
+                            try:
+                                _crec = df_ppna[df_ppna["campania"] == camp_stk_sel]["fecha"].max()
+                                _fec_crec = _crec.strftime("%d/%m/%Y") if pd.notna(_crec) else "s/d"
+                            except Exception:
+                                _fec_crec = "s/d"
+                            try:
+                                _cc = df_consumo[(df_consumo["campania"] == camp_stk_sel) & (df_consumo["raciones"] > 0)]["fecha"].max()
+                                _fec_cons = _cc.strftime("%m/%Y") if pd.notna(_cc) else "s/d"
+                            except Exception:
+                                _fec_cons = "s/d"
+                            _top_stock = [
+                                f"Stock al: {_fec_crec}",
+                                f"Últimos datos de crecimiento: {_fec_crec}   |   Últimos datos de consumo: {_fec_cons}",
+                            ]
+                            write_sheet(ws1, _pv_all, "Stock", top_lines=_top_stock)
 
                             # Hoja 2: PPNA Diaria (matriz de Dinámica)
                             pm_exp = mensual[mensual["campania"]==camp_stk_sel].copy()
@@ -1979,10 +2005,11 @@ with tab7:
                             buf.seek(0)
                             return buf.getvalue()
 
+                        _fecha_dl = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).strftime("%Y%m%d")
                         st.download_button(
                             label="📥 Descargar reporte completo (Excel)",
                             data=generar_excel_consolidado(),
-                            file_name=f"Reporte_ZED_{camp_stk_sel.replace('/','-')}.xlsx",
+                            file_name=f"{_fecha_dl}_Reporte_ZED_{camp_stk_sel.replace('/','-')}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             use_container_width=True
                         )
