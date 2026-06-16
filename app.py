@@ -5,6 +5,7 @@ sobre la base multi-campo de la version original.
 v2.1: Mapa interactivo de stock por potrero con Folium.
 v2.2: Excel con prefijo de fecha de descarga (AAAAMMDD_, hora Argentina) y
       encabezado "Stock al:" en la hoja Stock (ultima fecha de crecimiento y consumo).
+v2.3: Calibracion cross-sensor EVI Landsat (L8/L9) a escala Sentinel-2.
 """
 import streamlit as st
 import pandas as pd
@@ -41,6 +42,9 @@ FOLDER_CONSUMO     = "18SwkJcOt7l6h61IdX2WNopd53gcaWLaS"  # BBDD_consumos_zed
 KGMS_POR_RACION    = 12
 FACTOR_PISOTEO     = 1.15
 TASA_SENESCENCIA   = 0.095
+# Calibracion cross-sensor Landsat->Sentinel-2:  EVI_S2 = A + B*EVI_Landsat
+CAL_LANDSAT_A      = -0.0156
+CAL_LANDSAT_B      = 0.9380
 SHAPEFILE_PATH     = os.path.join(os.path.dirname(__file__), "potreros_combinados_ZED.shp")
 
 @st.cache_data(ttl=3600)
@@ -208,6 +212,11 @@ def cargar_seguimiento_drive():
     if "mes" not in df.columns:
         df["mes"] = df["fecha"].dt.month
     df = df.drop_duplicates(subset=["id_potrero","fecha","sensor"]).sort_values(["campo","potrero","fecha"])
+    # Calibracion cross-sensor: llevar EVI de Landsat (L8/L9) a escala Sentinel-2.
+    # S2 queda sin tocar. Se preserva el crudo en EVI_raw.
+    df["EVI_raw"] = df["EVI_promedio"]
+    _ls = df["sensor"].isin(["L8", "L9"])
+    df.loc[_ls, "EVI_promedio"] = CAL_LANDSAT_A + CAL_LANDSAT_B * df.loc[_ls, "EVI_promedio"]
     return df, nombres
 
 @st.cache_data(ttl=300)
