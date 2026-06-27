@@ -211,12 +211,26 @@ def cargar_seguimiento_drive():
     df["sector"] = df["sector"].fillna("-").astype(str).replace("nan", "-")
     if "mes" not in df.columns:
         df["mes"] = df["fecha"].dt.month
-    df = df.drop_duplicates(subset=["id_potrero","fecha","sensor"]).sort_values(["campo","potrero","fecha"])
-    # Calibracion cross-sensor: llevar EVI de Landsat (L8/L9) a escala Sentinel-2.
-    # S2 queda sin tocar. Se preserva el crudo en EVI_raw.
+    # ---- Cadena de saneamiento del EVI (v2.4) ----
+    # Orden: crudo -> filtro fisico [-1,1] -> calibrar L8/L9 -> mediana por clave.
+    # Reemplaza al viejo drop_duplicates(keep=first), que ante copias reprocesadas
+    # del mismo (id_potrero,fecha,sensor) elegia una fila al azar segun el orden de
+    # carga de archivos. La mediana es deterministica y robusta al outlier.
     df["EVI_raw"] = df["EVI_promedio"]
+    # 1) Filtro fisico sobre el CRUDO: descarta valores imposibles (EVI valido en [-1,1])
+    #    ANTES de que compitan por la clave, para que un corrupto no gane el desempate.
+    df = df[(df["EVI_raw"] >= -1.0) & (df["EVI_raw"] <= 1.0)].copy()
+    # 2) Calibracion cross-sensor: llevar EVI de Landsat (L8/L9) a escala Sentinel-2.
+    #    S2 queda sin tocar. Se calibra ANTES de la mediana para no mezclar escalas.
     _ls = df["sensor"].isin(["L8", "L9"])
-    df.loc[_ls, "EVI_promedio"] = CAL_LANDSAT_A + CAL_LANDSAT_B * df.loc[_ls, "EVI_promedio"]
+    df.loc[_ls, "EVI_promedio"] = CAL_LANDSAT_A + CAL_LANDSAT_B * df.loc[_ls, "EVI_raw"]
+    # 3) Deduplicacion por MEDIANA sobre EVI ya calibrado. Colapsa copias de la misma
+    #    clave a un unico valor central (numericas por mediana, resto por first).
+    _key = ["id_potrero", "fecha", "sensor"]
+    _num = [c for c in ["EVI_promedio", "EVI_raw", "NDVI_promedio"] if c in df.columns]
+    _med = df.groupby(_key, as_index=False)[_num].median()
+    _meta = df.drop_duplicates(subset=_key)[[c for c in df.columns if c not in _num]]
+    df = _med.merge(_meta, on=_key, how="left").sort_values(["campo","potrero","fecha"])
     return df, nombres
 
 @st.cache_data(ttl=300)
