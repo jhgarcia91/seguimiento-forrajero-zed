@@ -46,6 +46,11 @@ FOLDER_ERA5        = "1VM_xBcnH9Vd8tZ2ifqvU_JpeKiZJbx7b"  # BBDD_rfa_zed
 FOLDER_CONSUMO     = "18SwkJcOt7l6h61IdX2WNopd53gcaWLaS"  # BBDD_consumos_zed
 KGMS_POR_RACION    = 12.5
 FACTOR_PISOTEO     = 1.23
+# Potreros excluidos del análisis: son monte y no entran en las cuentas,
+# pero se mantienen en el shapefile hasta depurarlo. Se filtran por id_potrero
+# al cargar los datos, con lo cual desaparecen de todas las tabs, KPIs,
+# Excel y mapa (el merge inner con el shape los deja afuera solo).
+POTREROS_EXCLUIDOS = ["falta_envido_O_10", "falta_envido_O_18", "falta_envido_E_39"]
 TASA_SENESCENCIA   = 0.095
 # Calibracion cross-sensor Landsat->Sentinel-2:  EVI_S2 = A + B*EVI_Landsat
 CAL_LANDSAT_A      = -0.0156
@@ -497,6 +502,15 @@ with st.spinner("🔄 Conectando con Google Drive y cargando datos..."):
     df_seg, nombres_seg = cargar_seguimiento_drive()
     df_clasif, df_eur, nombres_conf = cargar_config_drive()
     df_era5 = cargar_era5_drive()
+
+# Filtro de potreros excluidos (monte): se sacan de seguimiento y clasificación,
+# con lo que quedan afuera de PPNA, stock, superficies, consumo (el merge por
+# potrero_al ya no los encuentra), Excel y mapa.
+if POTREROS_EXCLUIDOS:
+    if not df_seg.empty and "id_potrero" in df_seg.columns:
+        df_seg = df_seg[~df_seg["id_potrero"].isin(POTREROS_EXCLUIDOS)].copy()
+    if not df_clasif.empty and "id_potrero" in df_clasif.columns:
+        df_clasif = df_clasif[~df_clasif["id_potrero"].isin(POTREROS_EXCLUIDOS)].copy()
 
 if df_seg.empty or df_clasif.empty or df_eur.empty or df_era5.empty:
 
