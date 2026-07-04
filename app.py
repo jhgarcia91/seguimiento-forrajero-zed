@@ -44,8 +44,8 @@ FOLDER_SEGUIMIENTO = "1w69zOM3yrIvHY2vU-4Shsf5kWSEk2hFx"  # BBDD_segf_zed
 FOLDER_CONFIG      = "1A8LRTxLmhLQb7kM62r9p8OY77ETypYAe"  # BBDD_conf_zed
 FOLDER_ERA5        = "1VM_xBcnH9Vd8tZ2ifqvU_JpeKiZJbx7b"  # BBDD_rfa_zed
 FOLDER_CONSUMO     = "18SwkJcOt7l6h61IdX2WNopd53gcaWLaS"  # BBDD_consumos_zed
-KGMS_POR_RACION    = 12
-FACTOR_PISOTEO     = 1.15
+KGMS_POR_RACION    = 12.5
+FACTOR_PISOTEO     = 1.23
 TASA_SENESCENCIA   = 0.095
 # Calibracion cross-sensor Landsat->Sentinel-2:  EVI_S2 = A + B*EVI_Landsat
 CAL_LANDSAT_A      = -0.0156
@@ -935,7 +935,7 @@ with tab3:
         lbl_u = "Raciones" if es_rac else "kgMS"
         lbl_ha = "Rac/ha" if es_rac else "kgMS/ha"
         divisor = KGMS_POR_RACION if es_rac else 1
-        st.markdown(f"*PPNA acumulada ({lbl_ha}) × Superficie efectiva (ha) = {lbl_u} totales*" + (" · **1 ración = 12 kgMS**" if es_rac else ""))
+        st.markdown(f"*PPNA acumulada ({lbl_ha}) × Superficie efectiva (ha) = {lbl_u} totales*" + (f" · **1 ración = {fnum(KGMS_POR_RACION, 1)} kgMS**" if es_rac else ""))
         _cp_idx = campos.index(st.session_state["cp"]) if st.session_state["cp"] in campos else 0
         cp = st.selectbox("Campo:", campos, index=_cp_idx, format_func=lambda x:NOMBRE_CAMPOS.get(x,x), key="cp")
         dp = acum_pot_sup[(acum_pot_sup["campo"]==cp)&(acum_pot_sup["campania"]==camp_act)].copy()
