@@ -1,11 +1,16 @@
 """
-SEGUIMIENTO FORRAJERO - ZED  v2.2 - ERA5 + Multi-Campo + Mapa Stock
+SEGUIMIENTO FORRAJERO - ZED  v2.5 - ERA5 + Multi-Campo + Mapa Stock
 Fusion de logica avanzada (integracion trapezoidal, ERA5 diario, historial)
 sobre la base multi-campo de la version original.
 v2.1: Mapa interactivo de stock por potrero con Folium.
 v2.2: Excel con prefijo de fecha de descarga (AAAAMMDD_, hora Argentina) y
       encabezado "Stock al:" en la hoja Stock (ultima fecha de crecimiento y consumo).
 v2.3: Calibracion cross-sensor EVI Landsat (L8/L9) a escala Sentinel-2.
+v2.4: Saneamiento EVI: filtro fisico [-1,1] -> calibracion L8/L9 -> mediana por
+      (id_potrero, fecha, sensor). Reemplaza drop_duplicates(keep=first).
+v2.5: Consumos ALBOR: ante exports superpuestos con valores distintos para el
+      mismo (lote, mes), gana el archivo con modifiedTime mas reciente de Drive
+      (dato vigente en ALBOR). Aviso en pantalla cuando se detectan conflictos.
 """
 import streamlit as st
 import pandas as pd
@@ -288,11 +293,12 @@ def cargar_consumo_drive():
     """
     archivos = listar_archivos(FOLDER_CONSUMO, "xlsx")
     if not archivos:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
     frames = []
     for f in archivos:
         try:
             df_raw = descargar_excel(f["id"], f["name"], sheet_name="Export", header=None)
+            _mod_time = f.get("modifiedTime", "")  # RFC3339: ordenable como texto
             # Fila 0: ["Año-Mes", "2025-01", ...] — cabecera de meses
             # Fila 1: ["Lote", "Consumo", ...] — subencabezado
             # Filas 2+: datos
@@ -317,14 +323,30 @@ def cargar_consumo_drive():
             df_long["campania"] = df_long.apply(
                 lambda r: f"{int(r['anio'])}/{int(r['anio'])+1}" if r["mes"] >= 7 else f"{int(r['anio'])-1}/{int(r['anio'])}", axis=1)
             df_long["lote"] = df_long["lote"].astype(str).str.strip()
+            df_long["_archivo"]  = f["name"]
+            df_long["_mod_time"] = _mod_time
             frames.append(df_long)
         except Exception:
             pass
     if not frames:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
     df_out = pd.concat(frames, ignore_index=True)
-    df_out = df_out.drop_duplicates(subset=["lote","anio_mes"])
-    return df_out
+    # ---- Resolucion de exports superpuestos (v2.5) ----
+    # ALBOR puede corregir datos retroactivamente: dos exports que cubren el mismo
+    # mes pueden traer valores DISTINTOS para el mismo lote. El viejo
+    # drop_duplicates(keep=first) elegia segun orden alfabetico de nombre de
+    # archivo (arbitrario). Regla nueva: gana el archivo con modifiedTime mas
+    # reciente de Drive, que refleja el estado vigente de ALBOR.
+    _nver = df_out.groupby(["lote","anio_mes"])["raciones"].nunique()
+    _claves_confl = _nver[_nver > 1].reset_index()[["lote","anio_mes"]]
+    df_out = df_out.sort_values("_mod_time", ascending=False, kind="stable")
+    df_out = df_out.drop_duplicates(subset=["lote","anio_mes"], keep="first")
+    # Detalle de conflictos resueltos (para aviso en pantalla)
+    df_confl = _claves_confl.merge(
+        df_out[["lote","anio_mes","raciones","_archivo"]], on=["lote","anio_mes"], how="left"
+    ).rename(columns={"raciones":"raciones_usadas","_archivo":"archivo_ganador"})
+    df_out = df_out.drop(columns=["_archivo","_mod_time"])
+    return df_out, df_confl
 
 # === FUNCIONES DE CÁLCULO ===
 
@@ -538,7 +560,21 @@ mensual = calcular_mensual(df_ppna, df_era5)
 acum_campo, acum_pot = calcular_acumulada(mensual, df_clasif)
 tc, um, ua, uf = tc_campo_fn(df_ppna)
 
-df_consumo = cargar_consumo_drive()
+df_consumo, df_confl_consumo = cargar_consumo_drive()
+
+# Aviso de exports superpuestos con valores distintos (v2.5)
+if not df_confl_consumo.empty:
+    _n_confl = len(df_confl_consumo)
+    _archivos_gan = ", ".join(sorted(df_confl_consumo["archivo_ganador"].dropna().unique()))
+    st.warning(
+        f"⚠️ Consumos ALBOR: {fnum(_n_confl)} registros (lote, mes) con valores distintos "
+        f"entre exports superpuestos. Se usó el archivo más reciente: {_archivos_gan}."
+    )
+    with st.expander("Ver detalle de conflictos resueltos"):
+        _det = df_confl_consumo.sort_values(["anio_mes","lote"]).copy()
+        _det["raciones_usadas"] = _det["raciones_usadas"].map(lambda v: fnum(v, 2))
+        _det.columns = ["Lote","Año-Mes","Raciones usadas","Archivo ganador"]
+        st.dataframe(_det, use_container_width=True, hide_index=True)
 
 acum_pot_sup = acum_pot.merge(df_clasif[["campo","id_potrero","sector","potrero","superficie","sup_util"]], on=["campo","id_potrero"], how="left")
 acum_pot_sup["kgMS_tot"] = acum_pot_sup["PPNA_acum"] * acum_pot_sup["sup_util"]
