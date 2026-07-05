@@ -15,6 +15,14 @@ v2.6: Cache: TTL de loaders/descargadores de Drive de 5 min a 12 h (recarga real
       via boton Actualizar). Se quita @st.cache_data de calcular_ppna/mensual/
       acumulada/tc_campo_fn (reciben DataFrames; el hashing costaba mas que
       recalcular). No cambia ningun resultado, solo velocidad de interaccion.
+v2.7: Cuaderno de campo (tab NOTAS). Historia clinica por potrero sobre una
+      Google Sheet (service account con scope de escritura, aparte del Drive
+      readonly). Tres tipos -> tronco fijo + detalle variable: observacion
+      (texto), intervencion (producto/dosis/metodo/costo) y medicion (N muestras
+      con kg MV/MS y %MS, boton + para agregar). id_nota unico por fila; toda
+      entrada se puede reabrir/editar (completar el dato de laboratorio despues).
+      Columnas foto_url/lat/lon reservadas para las capas futuras (foto y geo).
+      No modifica nada del pipeline forrajero.
 """
 import streamlit as st
 import pandas as pd
@@ -60,6 +68,17 @@ TASA_SENESCENCIA   = 0.095
 CAL_LANDSAT_A      = -0.0156
 CAL_LANDSAT_B      = 0.9380
 SHAPEFILE_PATH     = os.path.join(os.path.dirname(__file__), "potreros_combinados_ZED.shp")
+# --- CUADERNO DE CAMPO (NOTAS) v2.7 ---
+SHEET_NOTAS_ID     = "1ZhVgElMpOFvo6dvX3JL9MAW92Vn06JxGdqdYJrmGu_E"  # planilla del cuaderno
+NOTAS_TAB          = "notas"
+NOTAS_COLS         = ["id_nota","fecha_hora","autor","tipo","establecimiento","potrero",
+                      "descripcion","producto","dosis","metodo","costo","n_muestra",
+                      "kg_materia_verde","kg_materia_seca","%_materia_seca","foto_url","lat","lon"]
+TIPO_LABEL         = {"observacion":"Observación","intervencion":"Intervención","medicion":"Medición"}
+TIPO_COLOR         = {"observacion":("#E1F5EE","#085041"),
+                      "intervencion":("#FAEEDA","#633806"),
+                      "medicion":("#EAF3DE","#27500A")}
+TZ_AR              = ZoneInfo("America/Argentina/Buenos_Aires")
 
 @st.cache_data(ttl=43200)
 def cargar_shapefile():
@@ -140,6 +159,98 @@ def fnum(v, dec=0):
     else:
         s = f"{v:,.{dec}f}"
     return s.replace(",","X").replace(".",",").replace("X",".")
+
+# === BACKEND CUADERNO DE CAMPO (Google Sheets) v2.7 ===
+# Usa el MISMO service account que Drive, pero con scope de escritura sobre Sheets.
+# No toca get_drive_service (que sigue siendo readonly).
+@st.cache_resource
+def get_sheets_service():
+    """Servicio de Google Sheets con permiso de lectura/escritura."""
+    try:
+        sa_info = st.secrets["gcp_service_account"]
+    except Exception:
+        sa_path = os.path.join(os.path.dirname(__file__), "service_account.json")
+        if os.path.exists(sa_path):
+            with open(sa_path) as f:
+                sa_info = json.load(f)
+        else:
+            return None
+    creds = service_account.Credentials.from_service_account_info(
+        sa_info if isinstance(sa_info, dict) else dict(sa_info),
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    return build("sheets", "v4", credentials=creds)
+
+def notas_leer():
+    """Lee la hoja 'notas' completa y la devuelve como DataFrame (todas las columnas texto)."""
+    service = get_sheets_service()
+    if not service:
+        return pd.DataFrame(columns=NOTAS_COLS)
+    try:
+        res = service.spreadsheets().values().get(
+            spreadsheetId=SHEET_NOTAS_ID, range=f"{NOTAS_TAB}!A2:R").execute()
+    except Exception:
+        return pd.DataFrame(columns=NOTAS_COLS)
+    vals = res.get("values", [])
+    if not vals:
+        return pd.DataFrame(columns=NOTAS_COLS)
+    rows = [(r + [""] * len(NOTAS_COLS))[:len(NOTAS_COLS)] for r in vals]
+    return pd.DataFrame(rows, columns=NOTAS_COLS)
+
+def notas_lista(tab):
+    """Lee una columna A (saltando encabezado) de una hoja auxiliar ('usuarios' o 'tipos')."""
+    service = get_sheets_service()
+    if not service:
+        return []
+    try:
+        res = service.spreadsheets().values().get(
+            spreadsheetId=SHEET_NOTAS_ID, range=f"{tab}!A2:A").execute()
+    except Exception:
+        return []
+    return [r[0].strip() for r in res.get("values", []) if r and str(r[0]).strip()]
+
+def notas_append(rows):
+    """Agrega una o varias filas al final de la hoja 'notas'."""
+    service = get_sheets_service()
+    if not service:
+        return False
+    service.spreadsheets().values().append(
+        spreadsheetId=SHEET_NOTAS_ID, range=f"{NOTAS_TAB}!A1",
+        valueInputOption="USER_ENTERED", insertDataOption="INSERT_ROWS",
+        body={"values": rows}).execute()
+    return True
+
+def notas_actualizar(id_nota, fila_valores):
+    """Reescribe la fila (A:R) cuyo id_nota coincide. Para reabrir y completar una entrada."""
+    service = get_sheets_service()
+    if not service:
+        return False
+    res = service.spreadsheets().values().get(
+        spreadsheetId=SHEET_NOTAS_ID, range=f"{NOTAS_TAB}!A2:A").execute()
+    ids = [r[0] if r else "" for r in res.get("values", [])]
+    try:
+        idx = ids.index(id_nota)
+    except ValueError:
+        return False
+    fila = idx + 2  # +1 encabezado, +1 base 1
+    service.spreadsheets().values().update(
+        spreadsheetId=SHEET_NOTAS_ID, range=f"{NOTAS_TAB}!A{fila}:R{fila}",
+        valueInputOption="USER_ENTERED", body={"values": [fila_valores]}).execute()
+    return True
+
+def notas_nuevo_id(base_dt, suf=None):
+    """id_nota único: timestamp compacto (+ sufijo de muestra si aplica)."""
+    base = base_dt.strftime("%Y%m%d%H%M%S")
+    return f"{base}-{suf}" if suf is not None else base
+
+def _num_txt(v, dec=0):
+    """Formatea un valor de celda (string) con fnum; devuelve '—' si está vacío."""
+    if v is None or str(v).strip() in ("", "-"):
+        return "—"
+    try:
+        return fnum(float(str(v).replace(",", ".")), dec)
+    except Exception:
+        return str(v)
 
 st.markdown("""
 <style>
@@ -624,7 +735,7 @@ for _k, _v in _ss_defaults.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
-tab1,tab2,tab3,tab6,tab7,tab5,tab4,tab8 = st.tabs(["TABLERO","DINÁMICA","DISTRIBUCIÓN","CONSUMO","STOCK","HISTÓRICA","SUPERFICIES","MAPA"])
+tab1,tab2,tab3,tab6,tab7,tab5,tab4,tab8,tab9 = st.tabs(["TABLERO","DINÁMICA","DISTRIBUCIÓN","CONSUMO","STOCK","HISTÓRICA","SUPERFICIES","MAPA","NOTAS"])
 
 # TAB 1
 with tab1:
@@ -2281,6 +2392,211 @@ with tab8:
 
     _tab8_render()
 
+# TAB 9 — CUADERNO DE CAMPO (NOTAS)
+with tab9:
+    st.markdown('<div class="section-title">CUADERNO DE CAMPO</div>', unsafe_allow_html=True)
+    st.caption("Historia clínica de cada potrero · observaciones, intervenciones y mediciones")
+
+    if isinstance(df_clasif, pd.DataFrame) and not df_clasif.empty and "campo" in df_clasif.columns:
+        _campos_notas = [c for c in df_clasif["campo"].dropna().unique().tolist()]
+    else:
+        _campos_notas = list(NOMBRE_CAMPOS.keys())
+
+    def _potreros_de(campo_code):
+        if isinstance(df_clasif, pd.DataFrame) and "campo" in df_clasif.columns and "potrero" in df_clasif.columns:
+            ps = df_clasif[df_clasif["campo"] == campo_code]["potrero"].dropna().astype(str).unique().tolist()
+            return sorted(ps)
+        return []
+
+    _usuarios  = notas_lista("usuarios")
+    _tipos_raw = notas_lista("tipos") or ["observacion","intervencion","medicion"]
+
+    if "notas_nm" not in st.session_state:
+        st.session_state["notas_nm"] = 1
+
+    # ---------------- CARGA ----------------
+    st.markdown('<div class="section-title" style="font-size:1rem;">Cargar nota</div>', unsafe_allow_html=True)
+    _tipo_code = st.radio("Tipo", _tipos_raw, horizontal=True,
+                          format_func=lambda t: TIPO_LABEL.get(t, t.capitalize()), key="notas_tipo")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        _est = st.selectbox("Establecimiento", _campos_notas,
+                            format_func=lambda x: NOMBRE_CAMPOS.get(x, x), key="notas_est")
+    with c2:
+        _pots = _potreros_de(_est)
+        _pot = st.selectbox("Potrero", _pots if _pots else ["—"], key="notas_pot")
+
+    c3, c4, c5 = st.columns(3)
+    with c3:
+        _fecha = st.date_input("Fecha", value=datetime.now(TZ_AR).date(), format="YYYY-MM-DD", key="notas_fecha")
+    with c4:
+        _hora = st.time_input("Hora", value=datetime.now(TZ_AR).time().replace(microsecond=0), key="notas_hora")
+    with c5:
+        if _usuarios:
+            _autor = st.selectbox("Autor", _usuarios, key="notas_autor")
+        else:
+            _autor = st.text_input("Autor", key="notas_autor_txt")
+
+    _desc = st.text_area("Descripción", key="notas_desc", height=70)
+
+    _prod = _dosis = _metodo = _costo = ""
+    _muestras = []
+    if _tipo_code == "intervencion":
+        ic1, ic2 = st.columns(2)
+        with ic1:
+            _prod   = st.text_input("Producto / insumo", key="notas_prod")
+            _metodo = st.text_input("Método / equipo", key="notas_metodo", placeholder="rolo, químico...")
+        with ic2:
+            _dosis = st.text_input("Dosis", key="notas_dosis")
+            _costo = st.text_input("Costo (informativo)", key="notas_costo")
+    elif _tipo_code == "medicion":
+        st.markdown('<div style="font-size:0.9rem;font-weight:500;color:#27500A;margin:0.3rem 0;">Muestras</div>', unsafe_allow_html=True)
+        for i in range(st.session_state["notas_nm"]):
+            st.markdown(f'<div style="font-size:0.8rem;color:#3B6D11;font-weight:500;">Muestra {i+1}</div>', unsafe_allow_html=True)
+            mc1, mc2, mc3 = st.columns(3)
+            with mc1: mv = st.number_input("kg MV", min_value=0.0, value=None, step=10.0, format="%.0f", key=f"notas_mv_{i}")
+            with mc2: ms = st.number_input("kg MS", min_value=0.0, value=None, step=10.0, format="%.0f", key=f"notas_ms_{i}")
+            with mc3: pm = st.number_input("% MS", min_value=0.0, max_value=100.0, value=None, step=0.1, format="%.1f", key=f"notas_pm_{i}")
+            _muestras.append((mv, ms, pm))
+        bcol1, bcol2, _ = st.columns([1, 1, 4])
+        with bcol1:
+            if st.button("➕ Agregar muestra", key="notas_add"):
+                st.session_state["notas_nm"] += 1
+                st.rerun()
+        with bcol2:
+            if st.session_state["notas_nm"] > 1 and st.button("➖ Quitar", key="notas_del"):
+                st.session_state["notas_nm"] -= 1
+                st.rerun()
+
+    if st.button("💾 Guardar nota", type="primary", key="notas_guardar"):
+        if not _pots or _pot == "—":
+            st.error("Elegí un potrero válido.")
+        else:
+            _dt      = datetime.combine(_fecha, _hora)
+            _fh      = _dt.strftime("%Y-%m-%d %H:%M")
+            _est_nom = NOMBRE_CAMPOS.get(_est, _est)
+            _base    = notas_nuevo_id(_dt)
+            _v = lambda x: "" if x is None else x
+            filas = []
+            if _tipo_code == "medicion":
+                for i, (mv, ms, pm) in enumerate(_muestras, start=1):
+                    filas.append([f"{_base}-{i}", _fh, _autor, _tipo_code, _est_nom, _pot,
+                                  _desc, "", "", "", "", i, _v(mv), _v(ms), _v(pm), "", "", ""])
+            else:
+                filas.append([_base, _fh, _autor, _tipo_code, _est_nom, _pot,
+                              _desc, _prod, _dosis, _metodo, _costo, "", "", "", "", "", "", ""])
+            try:
+                notas_append(filas)
+                st.session_state["notas_nm"] = 1
+                st.success("Nota guardada.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"No se pudo guardar: {e}")
+
+    st.markdown("---")
+
+    # ---------------- HISTORIAL ----------------
+    st.markdown('<div class="section-title" style="font-size:1rem;">Historial del potrero</div>', unsafe_allow_html=True)
+    hc1, hc2 = st.columns(2)
+    with hc1:
+        _hest = st.selectbox("Establecimiento", _campos_notas,
+                             format_func=lambda x: NOMBRE_CAMPOS.get(x, x), key="notas_hest")
+    with hc2:
+        _hpots = _potreros_de(_hest)
+        _hpot = st.selectbox("Potrero", _hpots if _hpots else ["—"], key="notas_hpot")
+
+    _df_notas = notas_leer()
+    _hest_nom = NOMBRE_CAMPOS.get(_hest, _hest)
+    if _df_notas.empty:
+        st.info("Todavía no hay notas cargadas.")
+    else:
+        _sel = _df_notas[(_df_notas["establecimiento"] == _hest_nom) &
+                         (_df_notas["potrero"].astype(str) == str(_hpot))].copy()
+        if _sel.empty:
+            st.info("Sin notas para este potrero todavía.")
+        else:
+            _sel = _sel.sort_values("fecha_hora", ascending=False)
+            for _fh_key in _sel["fecha_hora"].unique():
+                grupo = _sel[_sel["fecha_hora"] == _fh_key]
+                for _tp in grupo["tipo"].unique():
+                    g = grupo[grupo["tipo"] == _tp]
+                    row0 = g.iloc[0]
+                    bg, fg = TIPO_COLOR.get(_tp, ("#F1EFE8", "#2C2C2A"))
+                    label = TIPO_LABEL.get(_tp, _tp.capitalize())
+                    head = (f'<span style="font-size:0.72rem;font-weight:500;padding:2px 9px;border-radius:999px;'
+                            f'background:{bg};color:{fg};">{label}</span> '
+                            f'<span style="font-size:0.78rem;color:#888;">{row0["fecha_hora"]} · {row0["autor"]}</span>')
+                    cuerpo = f'<div style="font-size:0.85rem;margin-top:6px;">{row0["descripcion"]}</div>'
+                    if _tp == "medicion":
+                        det = []
+                        for _, r in g.sort_values("n_muestra").iterrows():
+                            det.append(f'<span style="color:#888;">M{r["n_muestra"]}</span> '
+                                       f'{_num_txt(r["kg_materia_verde"])} MV · {_num_txt(r["kg_materia_seca"])} MS · {_num_txt(r["%_materia_seca"],1)}%')
+                        cuerpo += '<div style="font-size:0.8rem;color:#555;margin-top:6px;line-height:1.9;">' + "<br>".join(det) + "</div>"
+                    elif _tp == "intervencion":
+                        partes = []
+                        if str(row0["producto"]).strip(): partes.append(f'<span style="color:#888;">Producto</span> {row0["producto"]}')
+                        if str(row0["dosis"]).strip():    partes.append(f'<span style="color:#888;">Dosis</span> {row0["dosis"]}')
+                        if str(row0["metodo"]).strip():   partes.append(f'<span style="color:#888;">Método</span> {row0["metodo"]}')
+                        if str(row0["costo"]).strip():    partes.append(f'<span style="color:#888;">Costo</span> {row0["costo"]}')
+                        if partes:
+                            cuerpo += '<div style="font-size:0.8rem;color:#555;margin-top:6px;">' + " · ".join(partes) + "</div>"
+                    st.markdown(f'<div style="background:#f8f8f8;border-radius:12px;padding:12px 14px;margin-bottom:10px;">{head}{cuerpo}</div>', unsafe_allow_html=True)
+
+    # ---------------- EDITAR / COMPLETAR ----------------
+    with st.expander("✏️ Editar o completar una entrada"):
+        if _df_notas.empty:
+            st.caption("No hay entradas para editar.")
+        else:
+            _sel_e = _df_notas.sort_values("fecha_hora", ascending=False)
+            _opts = _sel_e["id_nota"].tolist()
+            def _fmt_id(i):
+                r = _sel_e[_sel_e["id_nota"] == i].iloc[0]
+                ms = f' · M{r["n_muestra"]}' if str(r["n_muestra"]).strip() else ""
+                return f'{r["fecha_hora"]} · {r["establecimiento"]} {r["potrero"]} · {TIPO_LABEL.get(r["tipo"], r["tipo"])}{ms} · {str(r["descripcion"])[:25]}'
+            _id_e = st.selectbox("Entrada", _opts, format_func=_fmt_id, key="notas_edit_id")
+            _r = _sel_e[_sel_e["id_nota"] == _id_e].iloc[0]
+            _tp_e = _r["tipo"]
+            _desc_e = st.text_area("Descripción", value=str(_r["descripcion"]), key="notas_edit_desc", height=70)
+            nuevos = {"descripcion": _desc_e}
+            _f = lambda x: (float(str(x).replace(",", ".")) if str(x).strip() not in ("", "-", "nan") else None)
+            if _tp_e == "intervencion":
+                ec1, ec2 = st.columns(2)
+                with ec1:
+                    nuevos["producto"] = st.text_input("Producto", value=str(_r["producto"]), key="notas_edit_prod")
+                    nuevos["metodo"]   = st.text_input("Método", value=str(_r["metodo"]), key="notas_edit_met")
+                with ec2:
+                    nuevos["dosis"] = st.text_input("Dosis", value=str(_r["dosis"]), key="notas_edit_dos")
+                    nuevos["costo"] = st.text_input("Costo", value=str(_r["costo"]), key="notas_edit_cos")
+            elif _tp_e == "medicion":
+                ec1, ec2, ec3 = st.columns(3)
+                try: _vmv = _f(_r["kg_materia_verde"])
+                except Exception: _vmv = None
+                try: _vms = _f(_r["kg_materia_seca"])
+                except Exception: _vms = None
+                try: _vpm = _f(_r["%_materia_seca"])
+                except Exception: _vpm = None
+                with ec1: nuevos["kg_materia_verde"] = st.number_input("kg MV", min_value=0.0, value=_vmv, step=10.0, format="%.0f", key="notas_edit_mv")
+                with ec2: nuevos["kg_materia_seca"] = st.number_input("kg MS", min_value=0.0, value=_vms, step=10.0, format="%.0f", key="notas_edit_ms")
+                with ec3: nuevos["%_materia_seca"] = st.number_input("% MS", min_value=0.0, max_value=100.0, value=_vpm, step=0.1, format="%.1f", key="notas_edit_pm")
+            if st.button("Actualizar entrada", key="notas_edit_btn"):
+                fila = []
+                for col in NOTAS_COLS:
+                    if col in nuevos:
+                        v = nuevos[col]
+                        fila.append("" if v is None else v)
+                    else:
+                        fila.append(_r[col])
+                try:
+                    if notas_actualizar(_id_e, fila):
+                        st.success("Entrada actualizada.")
+                        st.rerun()
+                    else:
+                        st.error("No se encontró la entrada.")
+                except Exception as e:
+                    st.error(f"No se pudo actualizar: {e}")
+
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v2.6 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v2.7 · — DON TITO —</div>', unsafe_allow_html=True)
