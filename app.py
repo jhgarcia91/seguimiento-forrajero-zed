@@ -59,6 +59,11 @@ v3.5: Fix definitivo del limpiado. El pop de keys + rerun no limpiaba porque el
       formulario en su key (notas_x_{formid}); al guardar sube el formid y esos
       widgets nacen con key nueva, vacios. tipo/establecimiento/potrero/fecha
       mantienen key fija (se conservan).
+v3.6: El editor ("Editar o completar una entrada") ahora filtra las entradas
+      por el establecimiento/potrero elegido arriba (mismo criterio que el
+      historial), en vez de listar todas las notas de todos los potreros. El
+      selector del editor usa key por potrero para no arrastrar una seleccion
+      huerfana al cambiar de potrero.
 """
 import streamlit as st
 import pandas as pd
@@ -2596,16 +2601,18 @@ def _tab9_render():
 
     # ---------------- EDITAR / COMPLETAR ----------------
     with st.expander("✏️ Editar o completar una entrada"):
-        if _df_notas.empty:
-            st.caption("No hay entradas para editar.")
+        _df_edit = _df_notas[(_df_notas["establecimiento"] == _hest_nom) &
+                             (_df_notas["potrero"].astype(str) == str(_hpot))].copy() if not _df_notas.empty else _df_notas
+        if _df_edit.empty:
+            st.caption("No hay entradas de este potrero para editar.")
         else:
-            _sel_e = _df_notas.sort_values("fecha_hora", ascending=False)
+            _sel_e = _df_edit.sort_values("fecha_hora", ascending=False)
             _opts = _sel_e["id_nota"].tolist()
             def _fmt_id(i):
                 r = _sel_e[_sel_e["id_nota"] == i].iloc[0]
                 ms = f' · M{r["n_muestra"]}' if str(r["n_muestra"]).strip() else ""
-                return f'{str(r["fecha_hora"]).split(" ")[0]} · {r["establecimiento"]} {r["potrero"]} · {TIPO_LABEL.get(r["tipo"], r["tipo"])}{ms} · {str(r["descripcion"])[:25]}'
-            _id_e = st.selectbox("Entrada", _opts, format_func=_fmt_id, key="notas_edit_id")
+                return f'{str(r["fecha_hora"]).split(" ")[0]} · {TIPO_LABEL.get(r["tipo"], r["tipo"])}{ms} · {str(r["descripcion"])[:30]}'
+            _id_e = st.selectbox("Entrada", _opts, format_func=_fmt_id, key=f"notas_edit_id_{_est}_{_pot}")
             _r = _sel_e[_sel_e["id_nota"] == _id_e].iloc[0]
             _tp_e = _r["tipo"]
             _desc_e = st.text_area("Descripción", value=str(_r["descripcion"]), key="notas_edit_desc", height=70)
@@ -2653,4 +2660,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.5 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.6 · — DON TITO —</div>', unsafe_allow_html=True)
