@@ -29,6 +29,10 @@ v2.8: NOTAS más rápida. Se cachean las lecturas de la Sheet (notas/usuarios/
       Boton "Actualizar notas" para forzar refresco (util multiusuario). Se saca
       la hora de la vista: la fecha se guarda como AAAA-MM-DD 00:00 y en el
       historial se muestra solo la fecha.
+v2.9: Tab NOTAS envuelta en st.fragment: cada clic dentro (selectores, agregar
+      muestra, cambiar tipo) redibuja solo la tab, no toda la app; los rerun
+      internos usan scope="fragment". Reduce la latencia de interaccion en el
+      deploy. Requiere Streamlit >= 1.37 (Streamlit Cloud usa la ultima).
 """
 import streamlit as st
 import pandas as pd
@@ -2402,7 +2406,8 @@ with tab8:
     _tab8_render()
 
 # TAB 9 — CUADERNO DE CAMPO (NOTAS)
-with tab9:
+@st.fragment
+def _tab9_render():
     st.markdown('<div class="section-title">CUADERNO DE CAMPO</div>', unsafe_allow_html=True)
     st.caption("Historia clínica de cada potrero · observaciones, intervenciones y mediciones")
 
@@ -2473,11 +2478,11 @@ with tab9:
         with bcol1:
             if st.button("➕ Agregar muestra", key="notas_add"):
                 st.session_state["notas_nm"] += 1
-                st.rerun()
+                st.rerun(scope="fragment")
         with bcol2:
             if st.session_state["notas_nm"] > 1 and st.button("➖ Quitar", key="notas_del"):
                 st.session_state["notas_nm"] -= 1
-                st.rerun()
+                st.rerun(scope="fragment")
 
     if st.button("💾 Guardar nota", type="primary", key="notas_guardar"):
         if not _pots or _pot == "—":
@@ -2501,7 +2506,7 @@ with tab9:
                 st.session_state["notas_nm"] = 1
                 st.session_state["notas_ver"] += 1
                 st.success("Nota guardada.")
-                st.rerun()
+                st.rerun(scope="fragment")
             except Exception as e:
                 st.error(f"No se pudo guardar: {e}")
 
@@ -2514,7 +2519,7 @@ with tab9:
     with _th2:
         if st.button("🔄 Actualizar notas", key="notas_refresh"):
             st.session_state["notas_ver"] += 1
-            st.rerun()
+            st.rerun(scope="fragment")
     hc1, hc2 = st.columns(2)
     with hc1:
         _hest = st.selectbox("Establecimiento", _campos_notas,
@@ -2609,12 +2614,15 @@ with tab9:
                     if notas_actualizar(_id_e, fila):
                         st.session_state["notas_ver"] += 1
                         st.success("Entrada actualizada.")
-                        st.rerun()
+                        st.rerun(scope="fragment")
                     else:
                         st.error("No se encontró la entrada.")
                 except Exception as e:
                     st.error(f"No se pudo actualizar: {e}")
 
+with tab9:
+    _tab9_render()
+
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v2.8 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v2.9 · — DON TITO —</div>', unsafe_allow_html=True)
