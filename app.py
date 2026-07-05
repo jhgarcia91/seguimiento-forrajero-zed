@@ -45,6 +45,14 @@ v3.2: Al guardar una nota se limpian los campos de contenido (descripcion,
       muestras kg MV/MS/%MS, y producto/dosis/metodo/costo) borrando sus keys de
       session_state antes del rerun. Se conservan establecimiento, potrero, autor,
       fecha y tipo para cargar varias notas seguidas sin reelegir.
+v3.3: Fix: al guardar, la limpieza de campos no surtia efecto con
+      rerun(scope="fragment") (los widgets del fragment retenian el valor pese a
+      borrar sus keys). Se pasa a st.rerun() completo tras el borrado, que
+      reconstruye los widgets vacios. Solo ocurre al guardar (datos cacheados,
+      no recarga Drive). Confirmacion via st.toast (visible tras el rerun).
+v3.4: El autor tambien se limpia al guardar (multiusuario: evita que quede el
+      nombre del anterior). El selector de autor arranca vacio (index=None +
+      placeholder) y no se puede guardar sin elegir autor.
 """
 import streamlit as st
 import pandas as pd
@@ -2458,7 +2466,7 @@ def _tab9_render():
         _fecha = st.date_input("Fecha", value=datetime.now(TZ_AR).date(), format="YYYY-MM-DD", key="notas_fecha")
     with c5:
         if _usuarios:
-            _autor = st.selectbox("Autor", _usuarios, key="notas_autor")
+            _autor = st.selectbox("Autor", _usuarios, index=None, placeholder="Elegí autor", key="notas_autor")
         else:
             _autor = st.text_input("Autor", key="notas_autor_txt")
 
@@ -2496,6 +2504,8 @@ def _tab9_render():
     if st.button("💾 Guardar nota", type="primary", key="notas_guardar"):
         if not _pots or _pot == "—":
             st.error("Elegí un potrero válido.")
+        elif not _autor or not str(_autor).strip():
+            st.error("Elegí el autor antes de guardar.")
         else:
             _dt      = datetime.combine(_fecha, datetime.min.time())
             _fh      = _dt.strftime("%Y-%m-%d %H:%M")
@@ -2516,14 +2526,14 @@ def _tab9_render():
                 # limpiar solo el contenido de la nota; conservar establecimiento,
                 # potrero, autor, fecha y tipo para cargar varias seguidas cómodo.
                 _nm_prev = st.session_state.get("notas_nm", 1)
-                for _k in ("notas_desc", "notas_prod", "notas_metodo", "notas_dosis", "notas_costo"):
+                for _k in ("notas_desc", "notas_prod", "notas_metodo", "notas_dosis", "notas_costo", "notas_autor", "notas_autor_txt"):
                     st.session_state.pop(_k, None)
                 for _i in range(_nm_prev):
                     for _p in ("notas_mv_", "notas_ms_", "notas_pm_"):
                         st.session_state.pop(f"{_p}{_i}", None)
                 st.session_state["notas_nm"] = 1
-                st.success("Nota guardada.")
-                st.rerun(scope="fragment")
+                st.toast("Nota guardada ✅")
+                st.rerun()
             except Exception as e:
                 st.error(f"No se pudo guardar: {e}")
 
@@ -2638,4 +2648,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.2 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.4 · — DON TITO —</div>', unsafe_allow_html=True)
