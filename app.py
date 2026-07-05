@@ -41,6 +41,10 @@ v3.1: Refresco entre dispositivos. El cache de notas/usuarios/tipos ya no usa
       sesion); ahora se invalida con notas_leer.clear()/notas_lista.clear() al
       guardar, editar o pulsar "Actualizar notas". Solo esos eventos leen Google;
       la navegacion del formulario sigue saliendo de cache (sin perder velocidad).
+v3.2: Al guardar una nota se limpian los campos de contenido (descripcion,
+      muestras kg MV/MS/%MS, y producto/dosis/metodo/costo) borrando sus keys de
+      session_state antes del rerun. Se conservan establecimiento, potrero, autor,
+      fecha y tipo para cargar varias notas seguidas sin reelegir.
 """
 import streamlit as st
 import pandas as pd
@@ -2509,6 +2513,14 @@ def _tab9_render():
             try:
                 notas_append(filas)
                 notas_leer.clear()
+                # limpiar solo el contenido de la nota; conservar establecimiento,
+                # potrero, autor, fecha y tipo para cargar varias seguidas cómodo.
+                _nm_prev = st.session_state.get("notas_nm", 1)
+                for _k in ("notas_desc", "notas_prod", "notas_metodo", "notas_dosis", "notas_costo"):
+                    st.session_state.pop(_k, None)
+                for _i in range(_nm_prev):
+                    for _p in ("notas_mv_", "notas_ms_", "notas_pm_"):
+                        st.session_state.pop(f"{_p}{_i}", None)
                 st.session_state["notas_nm"] = 1
                 st.success("Nota guardada.")
                 st.rerun(scope="fragment")
@@ -2626,4 +2638,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.1 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.2 · — DON TITO —</div>', unsafe_allow_html=True)
