@@ -576,19 +576,9 @@ tc, um, ua, uf = tc_campo_fn(df_ppna)
 
 df_consumo, df_confl_consumo = cargar_consumo_drive()
 
-# Aviso de exports superpuestos con valores distintos (v2.5)
-if not df_confl_consumo.empty:
-    _n_confl = len(df_confl_consumo)
-    _archivos_gan = ", ".join(sorted(df_confl_consumo["archivo_ganador"].dropna().unique()))
-    st.warning(
-        f"⚠️ Consumos ALBOR: {fnum(_n_confl)} registros (lote, mes) con valores distintos "
-        f"entre exports superpuestos. Se usó el archivo más reciente: {_archivos_gan}."
-    )
-    with st.expander("Ver detalle de conflictos resueltos"):
-        _det = df_confl_consumo.sort_values(["anio_mes","lote"]).copy()
-        _det["raciones_usadas"] = _det["raciones_usadas"].map(lambda v: fnum(v, 2))
-        _det.columns = ["Lote","Año-Mes","Raciones usadas","Archivo ganador"]
-        st.dataframe(_det, use_container_width=True, hide_index=True)
+# Nota: la resolucion de exports superpuestos (dedup por modifiedTime) sigue
+# activa dentro de cargar_consumo_drive(); df_consumo ya viene limpio.
+# El aviso en pantalla de conflictos resueltos se removio a pedido (v2.6).
 
 acum_pot_sup = acum_pot.merge(df_clasif[["campo","id_potrero","sector","potrero","superficie","sup_util"]], on=["campo","id_potrero"], how="left")
 acum_pot_sup["kgMS_tot"] = acum_pot_sup["PPNA_acum"] * acum_pot_sup["sup_util"]
@@ -2293,4 +2283,4 @@ with tab8:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v2.1 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v2.6 · — DON TITO —</div>', unsafe_allow_html=True)
