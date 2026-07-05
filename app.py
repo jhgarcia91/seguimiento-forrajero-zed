@@ -36,6 +36,11 @@ v2.9: Tab NOTAS envuelta en st.fragment: cada clic dentro (selectores, agregar
 v3.0: El historial deja de tener selectores propios: sigue el potrero elegido
       arriba en la carga (un solo par establecimiento/potrero manda las dos
       cosas). Se conserva el boton "Actualizar notas".
+v3.1: Refresco entre dispositivos. El cache de notas/usuarios/tipos ya no usa
+      un contador de version por sesion (podia servir datos viejos a otra
+      sesion); ahora se invalida con notas_leer.clear()/notas_lista.clear() al
+      guardar, editar o pulsar "Actualizar notas". Solo esos eventos leen Google;
+      la navegacion del formulario sigue saliendo de cache (sin perder velocidad).
 """
 import streamlit as st
 import pandas as pd
@@ -195,9 +200,9 @@ def get_sheets_service():
     return build("sheets", "v4", credentials=creds)
 
 @st.cache_data(ttl=43200)
-def notas_leer(ver=0):
+def notas_leer():
     """Lee la hoja 'notas' completa y la devuelve como DataFrame (todas las columnas texto).
-    'ver' es un contador que se incrementa al guardar/editar para forzar el refresco."""
+    El cache se invalida con notas_leer.clear() al guardar/editar o al pulsar Actualizar."""
     service = get_sheets_service()
     if not service:
         return pd.DataFrame(columns=NOTAS_COLS)
@@ -213,7 +218,7 @@ def notas_leer(ver=0):
     return pd.DataFrame(rows, columns=NOTAS_COLS)
 
 @st.cache_data(ttl=43200)
-def notas_lista(tab, ver=0):
+def notas_lista(tab):
     """Lee una columna A (saltando encabezado) de una hoja auxiliar ('usuarios' o 'tipos')."""
     service = get_sheets_service()
     if not service:
@@ -2427,12 +2432,9 @@ def _tab9_render():
 
     if "notas_nm" not in st.session_state:
         st.session_state["notas_nm"] = 1
-    if "notas_ver" not in st.session_state:
-        st.session_state["notas_ver"] = 0
-    _ver = st.session_state["notas_ver"]
 
-    _usuarios  = notas_lista("usuarios", _ver)
-    _tipos_raw = notas_lista("tipos", _ver) or ["observacion","intervencion","medicion"]
+    _usuarios  = notas_lista("usuarios")
+    _tipos_raw = notas_lista("tipos") or ["observacion","intervencion","medicion"]
 
     # ---------------- CARGA ----------------
     st.markdown('<div class="section-title" style="font-size:1rem;">Cargar nota</div>', unsafe_allow_html=True)
@@ -2506,8 +2508,8 @@ def _tab9_render():
                               _desc, _prod, _dosis, _metodo, _costo, "", "", "", "", "", "", ""])
             try:
                 notas_append(filas)
+                notas_leer.clear()
                 st.session_state["notas_nm"] = 1
-                st.session_state["notas_ver"] += 1
                 st.success("Nota guardada.")
                 st.rerun(scope="fragment")
             except Exception as e:
@@ -2522,11 +2524,12 @@ def _tab9_render():
         st.markdown(f'<div class="section-title" style="font-size:1rem;">Historial del potrero{_titpot}</div>', unsafe_allow_html=True)
     with _th2:
         if st.button("🔄 Actualizar notas", key="notas_refresh"):
-            st.session_state["notas_ver"] += 1
+            notas_leer.clear()
+            notas_lista.clear()
             st.rerun(scope="fragment")
 
     _hpot     = _pot
-    _df_notas = notas_leer(st.session_state["notas_ver"])
+    _df_notas = notas_leer()
     _hest_nom = NOMBRE_CAMPOS.get(_est, _est)
     if _df_notas.empty:
         st.info("Todavía no hay notas cargadas.")
@@ -2610,7 +2613,7 @@ def _tab9_render():
                         fila.append(_r[col])
                 try:
                     if notas_actualizar(_id_e, fila):
-                        st.session_state["notas_ver"] += 1
+                        notas_leer.clear()
                         st.success("Entrada actualizada.")
                         st.rerun(scope="fragment")
                     else:
@@ -2623,4 +2626,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.0 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.1 · — DON TITO —</div>', unsafe_allow_html=True)
