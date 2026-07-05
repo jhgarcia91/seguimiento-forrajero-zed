@@ -11,6 +11,10 @@ v2.4: Saneamiento EVI: filtro fisico [-1,1] -> calibracion L8/L9 -> mediana por
 v2.5: Consumos ALBOR: ante exports superpuestos con valores distintos para el
       mismo (lote, mes), gana el archivo con modifiedTime mas reciente de Drive
       (dato vigente en ALBOR). Aviso en pantalla cuando se detectan conflictos.
+v2.6: Cache: TTL de loaders/descargadores de Drive de 5 min a 12 h (recarga real
+      via boton Actualizar). Se quita @st.cache_data de calcular_ppna/mensual/
+      acumulada/tc_campo_fn (reciben DataFrames; el hashing costaba mas que
+      recalcular). No cambia ningun resultado, solo velocidad de interaccion.
 """
 import streamlit as st
 import pandas as pd
@@ -57,7 +61,7 @@ CAL_LANDSAT_A      = -0.0156
 CAL_LANDSAT_B      = 0.9380
 SHAPEFILE_PATH     = os.path.join(os.path.dirname(__file__), "potreros_combinados_ZED.shp")
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=43200)
 def cargar_shapefile():
     """Carga shapefile de potreros y reproyecta a EPSG:4326."""
     if not os.path.exists(SHAPEFILE_PATH):
@@ -86,7 +90,7 @@ def get_drive_service():
     )
     return build("drive", "v3", credentials=creds)
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def listar_archivos(folder_id, extension=None):
     """Lista archivos de una carpeta de Drive."""
     service = get_drive_service()
@@ -100,7 +104,7 @@ def listar_archivos(folder_id, extension=None):
     results = service.files().list(q=q, fields="files(id,name,modifiedTime)", orderBy="name").execute()
     return results.get("files", [])
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def descargar_csv(file_id, file_name):
     """Descarga un CSV de Drive y lo devuelve como DataFrame."""
     service = get_drive_service()
@@ -114,7 +118,7 @@ def descargar_csv(file_id, file_name):
     buf.seek(0)
     return pd.read_csv(buf)
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def descargar_excel(file_id, file_name, sheet_name=0, header=0, skiprows=None):
     """Descarga un Excel de Drive y lo devuelve como DataFrame."""
     service = get_drive_service()
@@ -202,7 +206,7 @@ ORDEN_MESES = [7,8,9,10,11,12,1,2,3,4,5,6]
 
 # === CARGA DESDE GOOGLE DRIVE ===
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def cargar_seguimiento_drive():
     """Carga todos los CSVs de seguimiento desde Drive."""
     archivos = listar_archivos(FOLDER_SEGUIMIENTO, "csv")
@@ -243,7 +247,7 @@ def cargar_seguimiento_drive():
     df = _med.merge(_meta, on=_key, how="left").sort_values(["campo","potrero","fecha"])
     return df, nombres
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def cargar_config_drive():
     """Carga clasificacion y EUR desde Drive.
     RFA ya no viene del config: se lee del ERA5 diario."""
@@ -271,7 +275,7 @@ def cargar_config_drive():
             df_eur = df_raw
     return df_clasif, df_eur, nombres
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def cargar_era5_drive():
     """Carga CSVs ERA5 diario continuo desde Drive."""
     archivos = listar_archivos(FOLDER_ERA5, "csv")
@@ -290,7 +294,7 @@ def cargar_era5_drive():
     df["anio"] = df["fecha"].dt.year.astype(int)
     return df
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def cargar_consumo_drive():
     """Carga el Excel de consumo desde Drive.
     Formato esperado: hoja 'Export', fila 1 = cabecera Año-Mes, fila 2 = 'Lote'/'Consumo',
@@ -360,7 +364,6 @@ UMBRALES_ALLSKY = {
     6: 3.67, 7: 4.20, 8: 5.54, 9: 6.68, 10: 7.44, 11: 8.24, 12: 8.47
 }
 
-@st.cache_data(ttl=300)
 def calcular_ppna(df_seg, df_eur, df_era5):
     """TC_d = EVI × RFA_ERA5_d × EUR_mes × 10
     RFA se une por fecha exacta desde el ERA5 diario (BUSCARV).
@@ -392,7 +395,6 @@ def calcular_dias_activos(df_era5):
     ).reset_index()
     return dias
 
-@st.cache_data(ttl=300)
 def calcular_mensual(df_ppna, df_era5):
     """PPNA_m por potrero usando integración trapezoidal.
     TC_d = EVI × RFA_ERA5_d × EUR × 10 (RFA real del día de imagen).
@@ -448,7 +450,6 @@ def calcular_mensual(df_ppna, df_era5):
     m["orden"] = m["mes"].apply(mes_orden)
     return m
 
-@st.cache_data(ttl=300)
 def calcular_acumulada(mensual, df_clasif):
     pot = mensual.groupby(["campo","campania","id_potrero"])[["PPNA_m"]].sum().reset_index()
     pot.columns = ["campo","campania","id_potrero","PPNA_acum"]
@@ -460,7 +461,6 @@ def calcular_acumulada(mensual, df_clasif):
     campo_acum.columns = ["campo","campania","PPNA_acumulada"]
     return campo_acum, pot
 
-@st.cache_data(ttl=300)
 def tc_campo_fn(df_ppna):
     uf = df_ppna["fecha"].max(); um = uf.month; ua = uf.year
     act = df_ppna[(df_ppna["fecha"].dt.month==um)&(df_ppna["fecha"].dt.year==ua)].groupby("campo")["PPNA_kgMS_ha_d"].mean()
