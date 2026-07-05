@@ -1,16 +1,11 @@
 """
-SEGUIMIENTO FORRAJERO - ZED  v2.5 - ERA5 + Multi-Campo + Mapa Stock
+SEGUIMIENTO FORRAJERO - ZED  v2.2 - ERA5 + Multi-Campo + Mapa Stock
 Fusion de logica avanzada (integracion trapezoidal, ERA5 diario, historial)
 sobre la base multi-campo de la version original.
 v2.1: Mapa interactivo de stock por potrero con Folium.
 v2.2: Excel con prefijo de fecha de descarga (AAAAMMDD_, hora Argentina) y
       encabezado "Stock al:" en la hoja Stock (ultima fecha de crecimiento y consumo).
 v2.3: Calibracion cross-sensor EVI Landsat (L8/L9) a escala Sentinel-2.
-v2.4: Saneamiento EVI: filtro fisico [-1,1] -> calibracion L8/L9 -> mediana por
-      (id_potrero, fecha, sensor). Reemplaza drop_duplicates(keep=first).
-v2.5: Consumos ALBOR: ante exports superpuestos con valores distintos para el
-      mismo (lote, mes), gana el archivo con modifiedTime mas reciente de Drive
-      (dato vigente en ALBOR). Aviso en pantalla cuando se detectan conflictos.
 """
 import streamlit as st
 import pandas as pd
@@ -44,20 +39,15 @@ FOLDER_SEGUIMIENTO = "1w69zOM3yrIvHY2vU-4Shsf5kWSEk2hFx"  # BBDD_segf_zed
 FOLDER_CONFIG      = "1A8LRTxLmhLQb7kM62r9p8OY77ETypYAe"  # BBDD_conf_zed
 FOLDER_ERA5        = "1VM_xBcnH9Vd8tZ2ifqvU_JpeKiZJbx7b"  # BBDD_rfa_zed
 FOLDER_CONSUMO     = "18SwkJcOt7l6h61IdX2WNopd53gcaWLaS"  # BBDD_consumos_zed
-KGMS_POR_RACION    = 12.5
-FACTOR_PISOTEO     = 1.23
-# Potreros excluidos del análisis: son monte y no entran en las cuentas,
-# pero se mantienen en el shapefile hasta depurarlo. Se filtran por id_potrero
-# al cargar los datos, con lo cual desaparecen de todas las tabs, KPIs,
-# Excel y mapa (el merge inner con el shape los deja afuera solo).
-POTREROS_EXCLUIDOS = ["falta_envido_O_10", "falta_envido_O_18", "falta_envido_E_39"]
+KGMS_POR_RACION    = 12
+FACTOR_PISOTEO     = 1.15
 TASA_SENESCENCIA   = 0.095
 # Calibracion cross-sensor Landsat->Sentinel-2:  EVI_S2 = A + B*EVI_Landsat
 CAL_LANDSAT_A      = -0.0156
 CAL_LANDSAT_B      = 0.9380
 SHAPEFILE_PATH     = os.path.join(os.path.dirname(__file__), "potreros_combinados_ZED.shp")
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=43200)
 def cargar_shapefile():
     """Carga shapefile de potreros y reproyecta a EPSG:4326."""
     if not os.path.exists(SHAPEFILE_PATH):
@@ -86,7 +76,7 @@ def get_drive_service():
     )
     return build("drive", "v3", credentials=creds)
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def listar_archivos(folder_id, extension=None):
     """Lista archivos de una carpeta de Drive."""
     service = get_drive_service()
@@ -100,7 +90,7 @@ def listar_archivos(folder_id, extension=None):
     results = service.files().list(q=q, fields="files(id,name,modifiedTime)", orderBy="name").execute()
     return results.get("files", [])
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def descargar_csv(file_id, file_name):
     """Descarga un CSV de Drive y lo devuelve como DataFrame."""
     service = get_drive_service()
@@ -114,7 +104,7 @@ def descargar_csv(file_id, file_name):
     buf.seek(0)
     return pd.read_csv(buf)
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def descargar_excel(file_id, file_name, sheet_name=0, header=0, skiprows=None):
     """Descarga un Excel de Drive y lo devuelve como DataFrame."""
     service = get_drive_service()
@@ -202,7 +192,7 @@ ORDEN_MESES = [7,8,9,10,11,12,1,2,3,4,5,6]
 
 # === CARGA DESDE GOOGLE DRIVE ===
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def cargar_seguimiento_drive():
     """Carga todos los CSVs de seguimiento desde Drive."""
     archivos = listar_archivos(FOLDER_SEGUIMIENTO, "csv")
@@ -221,29 +211,15 @@ def cargar_seguimiento_drive():
     df["sector"] = df["sector"].fillna("-").astype(str).replace("nan", "-")
     if "mes" not in df.columns:
         df["mes"] = df["fecha"].dt.month
-    # ---- Cadena de saneamiento del EVI (v2.4) ----
-    # Orden: crudo -> filtro fisico [-1,1] -> calibrar L8/L9 -> mediana por clave.
-    # Reemplaza al viejo drop_duplicates(keep=first), que ante copias reprocesadas
-    # del mismo (id_potrero,fecha,sensor) elegia una fila al azar segun el orden de
-    # carga de archivos. La mediana es deterministica y robusta al outlier.
+    df = df.drop_duplicates(subset=["id_potrero","fecha","sensor"]).sort_values(["campo","potrero","fecha"])
+    # Calibracion cross-sensor: llevar EVI de Landsat (L8/L9) a escala Sentinel-2.
+    # S2 queda sin tocar. Se preserva el crudo en EVI_raw.
     df["EVI_raw"] = df["EVI_promedio"]
-    # 1) Filtro fisico sobre el CRUDO: descarta valores imposibles (EVI valido en [-1,1])
-    #    ANTES de que compitan por la clave, para que un corrupto no gane el desempate.
-    df = df[(df["EVI_raw"] >= -1.0) & (df["EVI_raw"] <= 1.0)].copy()
-    # 2) Calibracion cross-sensor: llevar EVI de Landsat (L8/L9) a escala Sentinel-2.
-    #    S2 queda sin tocar. Se calibra ANTES de la mediana para no mezclar escalas.
     _ls = df["sensor"].isin(["L8", "L9"])
-    df.loc[_ls, "EVI_promedio"] = CAL_LANDSAT_A + CAL_LANDSAT_B * df.loc[_ls, "EVI_raw"]
-    # 3) Deduplicacion por MEDIANA sobre EVI ya calibrado. Colapsa copias de la misma
-    #    clave a un unico valor central (numericas por mediana, resto por first).
-    _key = ["id_potrero", "fecha", "sensor"]
-    _num = [c for c in ["EVI_promedio", "EVI_raw", "NDVI_promedio"] if c in df.columns]
-    _med = df.groupby(_key, as_index=False)[_num].median()
-    _meta = df.drop_duplicates(subset=_key)[[c for c in df.columns if c not in _num]]
-    df = _med.merge(_meta, on=_key, how="left").sort_values(["campo","potrero","fecha"])
+    df.loc[_ls, "EVI_promedio"] = CAL_LANDSAT_A + CAL_LANDSAT_B * df.loc[_ls, "EVI_promedio"]
     return df, nombres
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def cargar_config_drive():
     """Carga clasificacion y EUR desde Drive.
     RFA ya no viene del config: se lee del ERA5 diario."""
@@ -271,7 +247,7 @@ def cargar_config_drive():
             df_eur = df_raw
     return df_clasif, df_eur, nombres
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def cargar_era5_drive():
     """Carga CSVs ERA5 diario continuo desde Drive."""
     archivos = listar_archivos(FOLDER_ERA5, "csv")
@@ -290,7 +266,7 @@ def cargar_era5_drive():
     df["anio"] = df["fecha"].dt.year.astype(int)
     return df
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=43200)
 def cargar_consumo_drive():
     """Carga el Excel de consumo desde Drive.
     Formato esperado: hoja 'Export', fila 1 = cabecera Año-Mes, fila 2 = 'Lote'/'Consumo',
@@ -298,12 +274,11 @@ def cargar_consumo_drive():
     """
     archivos = listar_archivos(FOLDER_CONSUMO, "xlsx")
     if not archivos:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
     frames = []
     for f in archivos:
         try:
             df_raw = descargar_excel(f["id"], f["name"], sheet_name="Export", header=None)
-            _mod_time = f.get("modifiedTime", "")  # RFC3339: ordenable como texto
             # Fila 0: ["Año-Mes", "2025-01", ...] — cabecera de meses
             # Fila 1: ["Lote", "Consumo", ...] — subencabezado
             # Filas 2+: datos
@@ -328,30 +303,14 @@ def cargar_consumo_drive():
             df_long["campania"] = df_long.apply(
                 lambda r: f"{int(r['anio'])}/{int(r['anio'])+1}" if r["mes"] >= 7 else f"{int(r['anio'])-1}/{int(r['anio'])}", axis=1)
             df_long["lote"] = df_long["lote"].astype(str).str.strip()
-            df_long["_archivo"]  = f["name"]
-            df_long["_mod_time"] = _mod_time
             frames.append(df_long)
         except Exception:
             pass
     if not frames:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
     df_out = pd.concat(frames, ignore_index=True)
-    # ---- Resolucion de exports superpuestos (v2.5) ----
-    # ALBOR puede corregir datos retroactivamente: dos exports que cubren el mismo
-    # mes pueden traer valores DISTINTOS para el mismo lote. El viejo
-    # drop_duplicates(keep=first) elegia segun orden alfabetico de nombre de
-    # archivo (arbitrario). Regla nueva: gana el archivo con modifiedTime mas
-    # reciente de Drive, que refleja el estado vigente de ALBOR.
-    _nver = df_out.groupby(["lote","anio_mes"])["raciones"].nunique()
-    _claves_confl = _nver[_nver > 1].reset_index()[["lote","anio_mes"]]
-    df_out = df_out.sort_values("_mod_time", ascending=False, kind="stable")
-    df_out = df_out.drop_duplicates(subset=["lote","anio_mes"], keep="first")
-    # Detalle de conflictos resueltos (para aviso en pantalla)
-    df_confl = _claves_confl.merge(
-        df_out[["lote","anio_mes","raciones","_archivo"]], on=["lote","anio_mes"], how="left"
-    ).rename(columns={"raciones":"raciones_usadas","_archivo":"archivo_ganador"})
-    df_out = df_out.drop(columns=["_archivo","_mod_time"])
-    return df_out, df_confl
+    df_out = df_out.drop_duplicates(subset=["lote","anio_mes"])
+    return df_out
 
 # === FUNCIONES DE CÁLCULO ===
 
@@ -360,7 +319,6 @@ UMBRALES_ALLSKY = {
     6: 3.67, 7: 4.20, 8: 5.54, 9: 6.68, 10: 7.44, 11: 8.24, 12: 8.47
 }
 
-@st.cache_data(ttl=300)
 def calcular_ppna(df_seg, df_eur, df_era5):
     """TC_d = EVI × RFA_ERA5_d × EUR_mes × 10
     RFA se une por fecha exacta desde el ERA5 diario (BUSCARV).
@@ -392,7 +350,6 @@ def calcular_dias_activos(df_era5):
     ).reset_index()
     return dias
 
-@st.cache_data(ttl=300)
 def calcular_mensual(df_ppna, df_era5):
     """PPNA_m por potrero usando integración trapezoidal.
     TC_d = EVI × RFA_ERA5_d × EUR × 10 (RFA real del día de imagen).
@@ -448,7 +405,6 @@ def calcular_mensual(df_ppna, df_era5):
     m["orden"] = m["mes"].apply(mes_orden)
     return m
 
-@st.cache_data(ttl=300)
 def calcular_acumulada(mensual, df_clasif):
     pot = mensual.groupby(["campo","campania","id_potrero"])[["PPNA_m"]].sum().reset_index()
     pot.columns = ["campo","campania","id_potrero","PPNA_acum"]
@@ -460,7 +416,6 @@ def calcular_acumulada(mensual, df_clasif):
     campo_acum.columns = ["campo","campania","PPNA_acumulada"]
     return campo_acum, pot
 
-@st.cache_data(ttl=300)
 def tc_campo_fn(df_ppna):
     uf = df_ppna["fecha"].max(); um = uf.month; ua = uf.year
     act = df_ppna[(df_ppna["fecha"].dt.month==um)&(df_ppna["fecha"].dt.year==ua)].groupby("campo")["PPNA_kgMS_ha_d"].mean()
@@ -502,15 +457,6 @@ with st.spinner("🔄 Conectando con Google Drive y cargando datos..."):
     df_seg, nombres_seg = cargar_seguimiento_drive()
     df_clasif, df_eur, nombres_conf = cargar_config_drive()
     df_era5 = cargar_era5_drive()
-
-# Filtro de potreros excluidos (monte): se sacan de seguimiento y clasificación,
-# con lo que quedan afuera de PPNA, stock, superficies, consumo (el merge por
-# potrero_al ya no los encuentra), Excel y mapa.
-if POTREROS_EXCLUIDOS:
-    if not df_seg.empty and "id_potrero" in df_seg.columns:
-        df_seg = df_seg[~df_seg["id_potrero"].isin(POTREROS_EXCLUIDOS)].copy()
-    if not df_clasif.empty and "id_potrero" in df_clasif.columns:
-        df_clasif = df_clasif[~df_clasif["id_potrero"].isin(POTREROS_EXCLUIDOS)].copy()
 
 if df_seg.empty or df_clasif.empty or df_eur.empty or df_era5.empty:
 
@@ -574,21 +520,7 @@ mensual = calcular_mensual(df_ppna, df_era5)
 acum_campo, acum_pot = calcular_acumulada(mensual, df_clasif)
 tc, um, ua, uf = tc_campo_fn(df_ppna)
 
-df_consumo, df_confl_consumo = cargar_consumo_drive()
-
-# Aviso de exports superpuestos con valores distintos (v2.5)
-if not df_confl_consumo.empty:
-    _n_confl = len(df_confl_consumo)
-    _archivos_gan = ", ".join(sorted(df_confl_consumo["archivo_ganador"].dropna().unique()))
-    st.warning(
-        f"⚠️ Consumos ALBOR: {fnum(_n_confl)} registros (lote, mes) con valores distintos "
-        f"entre exports superpuestos. Se usó el archivo más reciente: {_archivos_gan}."
-    )
-    with st.expander("Ver detalle de conflictos resueltos"):
-        _det = df_confl_consumo.sort_values(["anio_mes","lote"]).copy()
-        _det["raciones_usadas"] = _det["raciones_usadas"].map(lambda v: fnum(v, 2))
-        _det.columns = ["Lote","Año-Mes","Raciones usadas","Archivo ganador"]
-        st.dataframe(_det, use_container_width=True, hide_index=True)
+df_consumo = cargar_consumo_drive()
 
 acum_pot_sup = acum_pot.merge(df_clasif[["campo","id_potrero","sector","potrero","superficie","sup_util"]], on=["campo","id_potrero"], how="left")
 acum_pot_sup["kgMS_tot"] = acum_pot_sup["PPNA_acum"] * acum_pot_sup["sup_util"]
@@ -949,7 +881,7 @@ with tab3:
         lbl_u = "Raciones" if es_rac else "kgMS"
         lbl_ha = "Rac/ha" if es_rac else "kgMS/ha"
         divisor = KGMS_POR_RACION if es_rac else 1
-        st.markdown(f"*PPNA acumulada ({lbl_ha}) × Superficie efectiva (ha) = {lbl_u} totales*" + (f" · **1 ración = {fnum(KGMS_POR_RACION, 1)} kgMS**" if es_rac else ""))
+        st.markdown(f"*PPNA acumulada ({lbl_ha}) × Superficie efectiva (ha) = {lbl_u} totales*" + (" · **1 ración = 12 kgMS**" if es_rac else ""))
         _cp_idx = campos.index(st.session_state["cp"]) if st.session_state["cp"] in campos else 0
         cp = st.selectbox("Campo:", campos, index=_cp_idx, format_func=lambda x:NOMBRE_CAMPOS.get(x,x), key="cp")
         dp = acum_pot_sup[(acum_pot_sup["campo"]==cp)&(acum_pot_sup["campania"]==camp_act)].copy()
