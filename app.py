@@ -33,6 +33,9 @@ v2.9: Tab NOTAS envuelta en st.fragment: cada clic dentro (selectores, agregar
       muestra, cambiar tipo) redibuja solo la tab, no toda la app; los rerun
       internos usan scope="fragment". Reduce la latencia de interaccion en el
       deploy. Requiere Streamlit >= 1.37 (Streamlit Cloud usa la ultima).
+v3.0: El historial deja de tener selectores propios: sigue el potrero elegido
+      arriba en la carga (un solo par establecimiento/potrero manda las dos
+      cosas). Se conserva el boton "Actualizar notas".
 """
 import streamlit as st
 import pandas as pd
@@ -2515,21 +2518,16 @@ def _tab9_render():
     # ---------------- HISTORIAL ----------------
     _th1, _th2 = st.columns([4, 1])
     with _th1:
-        st.markdown('<div class="section-title" style="font-size:1rem;">Historial del potrero</div>', unsafe_allow_html=True)
+        _titpot = f" · {NOMBRE_CAMPOS.get(_est, _est)} {_pot}" if (_pots and _pot != "—") else ""
+        st.markdown(f'<div class="section-title" style="font-size:1rem;">Historial del potrero{_titpot}</div>', unsafe_allow_html=True)
     with _th2:
         if st.button("🔄 Actualizar notas", key="notas_refresh"):
             st.session_state["notas_ver"] += 1
             st.rerun(scope="fragment")
-    hc1, hc2 = st.columns(2)
-    with hc1:
-        _hest = st.selectbox("Establecimiento", _campos_notas,
-                             format_func=lambda x: NOMBRE_CAMPOS.get(x, x), key="notas_hest")
-    with hc2:
-        _hpots = _potreros_de(_hest)
-        _hpot = st.selectbox("Potrero", _hpots if _hpots else ["—"], key="notas_hpot")
 
+    _hpot     = _pot
     _df_notas = notas_leer(st.session_state["notas_ver"])
-    _hest_nom = NOMBRE_CAMPOS.get(_hest, _hest)
+    _hest_nom = NOMBRE_CAMPOS.get(_est, _est)
     if _df_notas.empty:
         st.info("Todavía no hay notas cargadas.")
     else:
@@ -2625,4 +2623,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v2.9 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.0 · — DON TITO —</div>', unsafe_allow_html=True)
