@@ -64,6 +64,12 @@ v3.6: El editor ("Editar o completar una entrada") ahora filtra las entradas
       historial), en vez de listar todas las notas de todos los potreros. El
       selector del editor usa key por potrero para no arrastrar una seleccion
       huerfana al cambiar de potrero.
+v3.7: Fix del editor: al cambiar de entrada en el desplegable, los campos (kg
+      MV/MS/%MS, descripcion, producto/dosis/metodo/costo) no se actualizaban
+      (key fija -> estado pegado, mostraban el valor de la primera entrada
+      abierta; riesgo de pisar el dato equivocado al Actualizar). Ahora sus keys
+      incluyen el id_nota de la entrada elegida, asi se rehacen y muestran el
+      valor real de cada muestra/nota.
 """
 import streamlit as st
 import pandas as pd
@@ -2615,17 +2621,17 @@ def _tab9_render():
             _id_e = st.selectbox("Entrada", _opts, format_func=_fmt_id, key=f"notas_edit_id_{_est}_{_pot}")
             _r = _sel_e[_sel_e["id_nota"] == _id_e].iloc[0]
             _tp_e = _r["tipo"]
-            _desc_e = st.text_area("Descripción", value=str(_r["descripcion"]), key="notas_edit_desc", height=70)
+            _desc_e = st.text_area("Descripción", value=str(_r["descripcion"]), key=f"notas_edit_desc_{_id_e}", height=70)
             nuevos = {"descripcion": _desc_e}
             _f = lambda x: (float(str(x).replace(",", ".")) if str(x).strip() not in ("", "-", "nan") else None)
             if _tp_e == "intervencion":
                 ec1, ec2 = st.columns(2)
                 with ec1:
-                    nuevos["producto"] = st.text_input("Producto", value=str(_r["producto"]), key="notas_edit_prod")
-                    nuevos["metodo"]   = st.text_input("Método", value=str(_r["metodo"]), key="notas_edit_met")
+                    nuevos["producto"] = st.text_input("Producto", value=str(_r["producto"]), key=f"notas_edit_prod_{_id_e}")
+                    nuevos["metodo"]   = st.text_input("Método", value=str(_r["metodo"]), key=f"notas_edit_met_{_id_e}")
                 with ec2:
-                    nuevos["dosis"] = st.text_input("Dosis", value=str(_r["dosis"]), key="notas_edit_dos")
-                    nuevos["costo"] = st.text_input("Costo", value=str(_r["costo"]), key="notas_edit_cos")
+                    nuevos["dosis"] = st.text_input("Dosis", value=str(_r["dosis"]), key=f"notas_edit_dos_{_id_e}")
+                    nuevos["costo"] = st.text_input("Costo", value=str(_r["costo"]), key=f"notas_edit_cos_{_id_e}")
             elif _tp_e == "medicion":
                 ec1, ec2, ec3 = st.columns(3)
                 try: _vmv = _f(_r["kg_materia_verde"])
@@ -2634,9 +2640,9 @@ def _tab9_render():
                 except Exception: _vms = None
                 try: _vpm = _f(_r["%_materia_seca"])
                 except Exception: _vpm = None
-                with ec1: nuevos["kg_materia_verde"] = st.number_input("kg MV", min_value=0.0, value=_vmv, step=10.0, format="%.0f", key="notas_edit_mv")
-                with ec2: nuevos["kg_materia_seca"] = st.number_input("kg MS", min_value=0.0, value=_vms, step=10.0, format="%.0f", key="notas_edit_ms")
-                with ec3: nuevos["%_materia_seca"] = st.number_input("% MS", min_value=0.0, max_value=100.0, value=_vpm, step=0.1, format="%.1f", key="notas_edit_pm")
+                with ec1: nuevos["kg_materia_verde"] = st.number_input("kg MV", min_value=0.0, value=_vmv, step=10.0, format="%.0f", key=f"notas_edit_mv_{_id_e}")
+                with ec2: nuevos["kg_materia_seca"] = st.number_input("kg MS", min_value=0.0, value=_vms, step=10.0, format="%.0f", key=f"notas_edit_ms_{_id_e}")
+                with ec3: nuevos["%_materia_seca"] = st.number_input("% MS", min_value=0.0, max_value=100.0, value=_vpm, step=0.1, format="%.1f", key=f"notas_edit_pm_{_id_e}")
             if st.button("Actualizar entrada", key="notas_edit_btn"):
                 fila = []
                 for col in NOTAS_COLS:
@@ -2660,4 +2666,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.6 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.7 · — DON TITO —</div>', unsafe_allow_html=True)
