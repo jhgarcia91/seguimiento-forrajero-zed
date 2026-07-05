@@ -23,6 +23,12 @@ v2.7: Cuaderno de campo (tab NOTAS). Historia clinica por potrero sobre una
       entrada se puede reabrir/editar (completar el dato de laboratorio despues).
       Columnas foto_url/lat/lon reservadas para las capas futuras (foto y geo).
       No modifica nada del pipeline forrajero.
+v2.8: NOTAS más rápida. Se cachean las lecturas de la Sheet (notas/usuarios/
+      tipos) con un contador de version en session_state que solo se incrementa
+      al guardar/editar; los clics de navegar el formulario ya no pegan a Google.
+      Boton "Actualizar notas" para forzar refresco (util multiusuario). Se saca
+      la hora de la vista: la fecha se guarda como AAAA-MM-DD 00:00 y en el
+      historial se muestra solo la fecha.
 """
 import streamlit as st
 import pandas as pd
@@ -181,8 +187,10 @@ def get_sheets_service():
     )
     return build("sheets", "v4", credentials=creds)
 
-def notas_leer():
-    """Lee la hoja 'notas' completa y la devuelve como DataFrame (todas las columnas texto)."""
+@st.cache_data(ttl=43200)
+def notas_leer(ver=0):
+    """Lee la hoja 'notas' completa y la devuelve como DataFrame (todas las columnas texto).
+    'ver' es un contador que se incrementa al guardar/editar para forzar el refresco."""
     service = get_sheets_service()
     if not service:
         return pd.DataFrame(columns=NOTAS_COLS)
@@ -197,7 +205,8 @@ def notas_leer():
     rows = [(r + [""] * len(NOTAS_COLS))[:len(NOTAS_COLS)] for r in vals]
     return pd.DataFrame(rows, columns=NOTAS_COLS)
 
-def notas_lista(tab):
+@st.cache_data(ttl=43200)
+def notas_lista(tab, ver=0):
     """Lee una columna A (saltando encabezado) de una hoja auxiliar ('usuarios' o 'tipos')."""
     service = get_sheets_service()
     if not service:
@@ -2408,11 +2417,14 @@ with tab9:
             return sorted(ps)
         return []
 
-    _usuarios  = notas_lista("usuarios")
-    _tipos_raw = notas_lista("tipos") or ["observacion","intervencion","medicion"]
-
     if "notas_nm" not in st.session_state:
         st.session_state["notas_nm"] = 1
+    if "notas_ver" not in st.session_state:
+        st.session_state["notas_ver"] = 0
+    _ver = st.session_state["notas_ver"]
+
+    _usuarios  = notas_lista("usuarios", _ver)
+    _tipos_raw = notas_lista("tipos", _ver) or ["observacion","intervencion","medicion"]
 
     # ---------------- CARGA ----------------
     st.markdown('<div class="section-title" style="font-size:1rem;">Cargar nota</div>', unsafe_allow_html=True)
@@ -2427,11 +2439,9 @@ with tab9:
         _pots = _potreros_de(_est)
         _pot = st.selectbox("Potrero", _pots if _pots else ["—"], key="notas_pot")
 
-    c3, c4, c5 = st.columns(3)
+    c3, c5 = st.columns(2)
     with c3:
         _fecha = st.date_input("Fecha", value=datetime.now(TZ_AR).date(), format="YYYY-MM-DD", key="notas_fecha")
-    with c4:
-        _hora = st.time_input("Hora", value=datetime.now(TZ_AR).time().replace(microsecond=0), key="notas_hora")
     with c5:
         if _usuarios:
             _autor = st.selectbox("Autor", _usuarios, key="notas_autor")
@@ -2473,7 +2483,7 @@ with tab9:
         if not _pots or _pot == "—":
             st.error("Elegí un potrero válido.")
         else:
-            _dt      = datetime.combine(_fecha, _hora)
+            _dt      = datetime.combine(_fecha, datetime.min.time())
             _fh      = _dt.strftime("%Y-%m-%d %H:%M")
             _est_nom = NOMBRE_CAMPOS.get(_est, _est)
             _base    = notas_nuevo_id(_dt)
@@ -2489,6 +2499,7 @@ with tab9:
             try:
                 notas_append(filas)
                 st.session_state["notas_nm"] = 1
+                st.session_state["notas_ver"] += 1
                 st.success("Nota guardada.")
                 st.rerun()
             except Exception as e:
@@ -2497,7 +2508,13 @@ with tab9:
     st.markdown("---")
 
     # ---------------- HISTORIAL ----------------
-    st.markdown('<div class="section-title" style="font-size:1rem;">Historial del potrero</div>', unsafe_allow_html=True)
+    _th1, _th2 = st.columns([4, 1])
+    with _th1:
+        st.markdown('<div class="section-title" style="font-size:1rem;">Historial del potrero</div>', unsafe_allow_html=True)
+    with _th2:
+        if st.button("🔄 Actualizar notas", key="notas_refresh"):
+            st.session_state["notas_ver"] += 1
+            st.rerun()
     hc1, hc2 = st.columns(2)
     with hc1:
         _hest = st.selectbox("Establecimiento", _campos_notas,
@@ -2506,7 +2523,7 @@ with tab9:
         _hpots = _potreros_de(_hest)
         _hpot = st.selectbox("Potrero", _hpots if _hpots else ["—"], key="notas_hpot")
 
-    _df_notas = notas_leer()
+    _df_notas = notas_leer(st.session_state["notas_ver"])
     _hest_nom = NOMBRE_CAMPOS.get(_hest, _hest)
     if _df_notas.empty:
         st.info("Todavía no hay notas cargadas.")
@@ -2526,7 +2543,7 @@ with tab9:
                     label = TIPO_LABEL.get(_tp, _tp.capitalize())
                     head = (f'<span style="font-size:0.72rem;font-weight:500;padding:2px 9px;border-radius:999px;'
                             f'background:{bg};color:{fg};">{label}</span> '
-                            f'<span style="font-size:0.78rem;color:#888;">{row0["fecha_hora"]} · {row0["autor"]}</span>')
+                            f'<span style="font-size:0.78rem;color:#888;">{str(row0["fecha_hora"]).split(" ")[0]} · {row0["autor"]}</span>')
                     cuerpo = f'<div style="font-size:0.85rem;margin-top:6px;">{row0["descripcion"]}</div>'
                     if _tp == "medicion":
                         det = []
@@ -2554,7 +2571,7 @@ with tab9:
             def _fmt_id(i):
                 r = _sel_e[_sel_e["id_nota"] == i].iloc[0]
                 ms = f' · M{r["n_muestra"]}' if str(r["n_muestra"]).strip() else ""
-                return f'{r["fecha_hora"]} · {r["establecimiento"]} {r["potrero"]} · {TIPO_LABEL.get(r["tipo"], r["tipo"])}{ms} · {str(r["descripcion"])[:25]}'
+                return f'{str(r["fecha_hora"]).split(" ")[0]} · {r["establecimiento"]} {r["potrero"]} · {TIPO_LABEL.get(r["tipo"], r["tipo"])}{ms} · {str(r["descripcion"])[:25]}'
             _id_e = st.selectbox("Entrada", _opts, format_func=_fmt_id, key="notas_edit_id")
             _r = _sel_e[_sel_e["id_nota"] == _id_e].iloc[0]
             _tp_e = _r["tipo"]
@@ -2590,6 +2607,7 @@ with tab9:
                         fila.append(_r[col])
                 try:
                     if notas_actualizar(_id_e, fila):
+                        st.session_state["notas_ver"] += 1
                         st.success("Entrada actualizada.")
                         st.rerun()
                     else:
@@ -2599,4 +2617,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v2.7 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v2.8 · — DON TITO —</div>', unsafe_allow_html=True)
