@@ -53,6 +53,12 @@ v3.3: Fix: al guardar, la limpieza de campos no surtia efecto con
 v3.4: El autor tambien se limpia al guardar (multiusuario: evita que quede el
       nombre del anterior). El selector de autor arranca vacio (index=None +
       placeholder) y no se puede guardar sin elegir autor.
+v3.5: Fix definitivo del limpiado. El pop de keys + rerun no limpiaba porque el
+      fragment reinyecta el estado de sus widgets. Ahora los campos que se
+      limpian (descripcion, muestras, intervencion, autor) llevan un id de
+      formulario en su key (notas_x_{formid}); al guardar sube el formid y esos
+      widgets nacen con key nueva, vacios. tipo/establecimiento/potrero/fecha
+      mantienen key fija (se conservan).
 """
 import streamlit as st
 import pandas as pd
@@ -2444,6 +2450,9 @@ def _tab9_render():
 
     if "notas_nm" not in st.session_state:
         st.session_state["notas_nm"] = 1
+    if "notas_formid" not in st.session_state:
+        st.session_state["notas_formid"] = 0
+    _fid = st.session_state["notas_formid"]
 
     _usuarios  = notas_lista("usuarios")
     _tipos_raw = notas_lista("tipos") or ["observacion","intervencion","medicion"]
@@ -2466,30 +2475,30 @@ def _tab9_render():
         _fecha = st.date_input("Fecha", value=datetime.now(TZ_AR).date(), format="YYYY-MM-DD", key="notas_fecha")
     with c5:
         if _usuarios:
-            _autor = st.selectbox("Autor", _usuarios, index=None, placeholder="Elegí autor", key="notas_autor")
+            _autor = st.selectbox("Autor", _usuarios, index=None, placeholder="Elegí autor", key=f"notas_autor_{_fid}")
         else:
-            _autor = st.text_input("Autor", key="notas_autor_txt")
+            _autor = st.text_input("Autor", key=f"notas_autor_txt_{_fid}")
 
-    _desc = st.text_area("Descripción", key="notas_desc", height=70)
+    _desc = st.text_area("Descripción", key=f"notas_desc_{_fid}", height=70)
 
     _prod = _dosis = _metodo = _costo = ""
     _muestras = []
     if _tipo_code == "intervencion":
         ic1, ic2 = st.columns(2)
         with ic1:
-            _prod   = st.text_input("Producto / insumo", key="notas_prod")
-            _metodo = st.text_input("Método / equipo", key="notas_metodo", placeholder="rolo, químico...")
+            _prod   = st.text_input("Producto / insumo", key=f"notas_prod_{_fid}")
+            _metodo = st.text_input("Método / equipo", key=f"notas_metodo_{_fid}", placeholder="rolo, químico...")
         with ic2:
-            _dosis = st.text_input("Dosis", key="notas_dosis")
-            _costo = st.text_input("Costo (informativo)", key="notas_costo")
+            _dosis = st.text_input("Dosis", key=f"notas_dosis_{_fid}")
+            _costo = st.text_input("Costo (informativo)", key=f"notas_costo_{_fid}")
     elif _tipo_code == "medicion":
         st.markdown('<div style="font-size:0.9rem;font-weight:500;color:#27500A;margin:0.3rem 0;">Muestras</div>', unsafe_allow_html=True)
         for i in range(st.session_state["notas_nm"]):
             st.markdown(f'<div style="font-size:0.8rem;color:#3B6D11;font-weight:500;">Muestra {i+1}</div>', unsafe_allow_html=True)
             mc1, mc2, mc3 = st.columns(3)
-            with mc1: mv = st.number_input("kg MV", min_value=0.0, value=None, step=10.0, format="%.0f", key=f"notas_mv_{i}")
-            with mc2: ms = st.number_input("kg MS", min_value=0.0, value=None, step=10.0, format="%.0f", key=f"notas_ms_{i}")
-            with mc3: pm = st.number_input("% MS", min_value=0.0, max_value=100.0, value=None, step=0.1, format="%.1f", key=f"notas_pm_{i}")
+            with mc1: mv = st.number_input("kg MV", min_value=0.0, value=None, step=10.0, format="%.0f", key=f"notas_mv_{_fid}_{i}")
+            with mc2: ms = st.number_input("kg MS", min_value=0.0, value=None, step=10.0, format="%.0f", key=f"notas_ms_{_fid}_{i}")
+            with mc3: pm = st.number_input("% MS", min_value=0.0, max_value=100.0, value=None, step=0.1, format="%.1f", key=f"notas_pm_{_fid}_{i}")
             _muestras.append((mv, ms, pm))
         bcol1, bcol2, _ = st.columns([1, 1, 4])
         with bcol1:
@@ -2523,17 +2532,13 @@ def _tab9_render():
             try:
                 notas_append(filas)
                 notas_leer.clear()
-                # limpiar solo el contenido de la nota; conservar establecimiento,
-                # potrero, autor, fecha y tipo para cargar varias seguidas cómodo.
-                _nm_prev = st.session_state.get("notas_nm", 1)
-                for _k in ("notas_desc", "notas_prod", "notas_metodo", "notas_dosis", "notas_costo", "notas_autor", "notas_autor_txt"):
-                    st.session_state.pop(_k, None)
-                for _i in range(_nm_prev):
-                    for _p in ("notas_mv_", "notas_ms_", "notas_pm_"):
-                        st.session_state.pop(f"{_p}{_i}", None)
+                # renovar la identidad de los campos que se limpian: al subir el
+                # formid, sus widgets nacen con key nueva (vacios), sorteando el
+                # estado que el fragment reinyectaba. Se conservan tipo/est/pot/fecha.
+                st.session_state["notas_formid"] += 1
                 st.session_state["notas_nm"] = 1
                 st.toast("Nota guardada ✅")
-                st.rerun()
+                st.rerun(scope="fragment")
             except Exception as e:
                 st.error(f"No se pudo guardar: {e}")
 
@@ -2648,4 +2653,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.4 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.5 · — DON TITO —</div>', unsafe_allow_html=True)
