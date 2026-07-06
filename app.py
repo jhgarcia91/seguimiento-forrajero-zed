@@ -77,6 +77,13 @@ v3.8: Informe PDF del cuaderno (reportlab). Boton en la tab NOTAS: selectores
       (logo_dontito.png junto al app.py si existe), pie "Seguimiento Forrajero
       - Don Tito" + pagina. Import de reportlab lazy. REQUIERE agregar
       'reportlab' al requirements.txt del deploy.
+v3.9: El informe PDF usa el logo de Don Tito ya embebido en la app (base64
+      LOGO_DT), decodificado a un BytesIO y pasado a reportlab. Ya no busca un
+      archivo logo_dontito.png externo. El logo aparece en la caratula sin
+      necesidad de subir ningun archivo extra.
+v4.0: Nombre del PDF descargado con formato AAAAMMDD_cuaderno_campo_EMPRESA.pdf
+      (fecha del dia de descarga + cliente). El cliente sale de una variable
+      (_cliente="ZED" por ahora) para adaptarse al multi-cliente a futuro.
 """
 import streamlit as st
 import pandas as pd
@@ -85,6 +92,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import calendar
 import io
+import base64
 import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -324,9 +332,10 @@ def _pdf_fecha(fh):
     except Exception:
         return s
 
-def generar_pdf_notas(df, desde, hasta, cliente="ZED", logo_path=None):
+def generar_pdf_notas(df, desde, hasta, cliente="ZED", logo_data=None):
     """Devuelve los bytes de un PDF con las notas del período, agrupadas Campo -> Potrero
-    -> notas cronológicas ascendentes. Import de reportlab lazy."""
+    -> notas cronológicas ascendentes. 'logo_data' es un file-like (BytesIO) opcional.
+    Import de reportlab lazy."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib import colors
@@ -409,9 +418,9 @@ def generar_pdf_notas(df, desde, hasta, cliente="ZED", logo_path=None):
     story = []
     titblock = [Paragraph("Cuaderno de campo", STY["titulo"]),
                 Paragraph("Informe de recorridas", STY["subt"])]
-    if logo_path and os.path.exists(logo_path):
+    if logo_data:
         try:
-            logo = Image(logo_path, width=16*mm, height=16*mm)
+            logo = Image(logo_data, width=16*mm, height=16*mm)
             head = Table([[titblock, logo]], colWidths=[ANCHO-20*mm, 20*mm])
             head.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(1,0),(1,0),"RIGHT"),
                                       ("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0)]))
@@ -2844,11 +2853,16 @@ def _tab9_render():
             st.error("La fecha 'Desde' no puede ser posterior a 'Hasta'.")
         else:
             try:
-                _logo = os.path.join(os.path.dirname(__file__), "logo_dontito.png")
+                try:
+                    _logo_io = io.BytesIO(base64.b64decode(LOGO_DT))
+                except Exception:
+                    _logo_io = None
+                _cliente = "ZED"  # cliente actual; a futuro sale de la config multi-cliente
                 _pdf = generar_pdf_notas(_df_notas, _desde, _hasta,
-                                         cliente="ZED", logo_path=_logo)
+                                         cliente=_cliente, logo_data=_logo_io)
                 st.session_state["pdf_bytes"] = _pdf
-                st.session_state["pdf_nombre"] = f"cuaderno_{_desde}_{_hasta}.pdf"
+                _hoy_str = datetime.now(TZ_AR).strftime("%Y%m%d")
+                st.session_state["pdf_nombre"] = f"{_hoy_str}_cuaderno_campo_{_cliente}.pdf"
             except ModuleNotFoundError:
                 st.error("Falta la librería reportlab en el deploy. Agregá 'reportlab' al requirements.txt.")
             except Exception as e:
@@ -2864,4 +2878,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.8 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v4.0 · — DON TITO —</div>', unsafe_allow_html=True)
