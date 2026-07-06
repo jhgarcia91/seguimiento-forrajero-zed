@@ -84,6 +84,8 @@ v3.9: El informe PDF usa el logo de Don Tito ya embebido en la app (base64
 v4.0: Nombre del PDF descargado con formato AAAAMMDD_cuaderno_campo_EMPRESA.pdf
       (fecha del dia de descarga + cliente). El cliente sale de una variable
       (_cliente="ZED" por ahora) para adaptarse al multi-cliente a futuro.
+v4.1: PDF: logo de la caratula a 24 mm (antes 16). Subtitulo cambia de "Informe
+      de recorridas" a "Anotaciones de recorridas".
 """
 import streamlit as st
 import pandas as pd
@@ -417,11 +419,11 @@ def generar_pdf_notas(df, desde, hasta, cliente="ZED", logo_data=None):
 
     story = []
     titblock = [Paragraph("Cuaderno de campo", STY["titulo"]),
-                Paragraph("Informe de recorridas", STY["subt"])]
+                Paragraph("Anotaciones de recorridas", STY["subt"])]
     if logo_data:
         try:
-            logo = Image(logo_data, width=16*mm, height=16*mm)
-            head = Table([[titblock, logo]], colWidths=[ANCHO-20*mm, 20*mm])
+            logo = Image(logo_data, width=24*mm, height=24*mm)
+            head = Table([[titblock, logo]], colWidths=[ANCHO-28*mm, 28*mm])
             head.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(1,0),(1,0),"RIGHT"),
                                       ("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0)]))
             story.append(head)
@@ -2878,4 +2880,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v4.0 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v4.1 · — DON TITO —</div>', unsafe_allow_html=True)
