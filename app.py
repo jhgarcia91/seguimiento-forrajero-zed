@@ -70,6 +70,13 @@ v3.7: Fix del editor: al cambiar de entrada en el desplegable, los campos (kg
       abierta; riesgo de pisar el dato equivocado al Actualizar). Ahora sus keys
       incluyen el id_nota de la entrada elegida, asi se rehacen y muestran el
       valor real de cada muestra/nota.
+v3.8: Informe PDF del cuaderno (reportlab). Boton en la tab NOTAS: selectores
+      Desde/Hasta y descarga. Agrupa Campo -> Potrero -> notas cronologicas
+      ascendentes; solo campos/potreros con notas en el periodo. Encabezado
+      "Cuaderno de campo / Informe de recorridas" + logo Don Tito opcional
+      (logo_dontito.png junto al app.py si existe), pie "Seguimiento Forrajero
+      - Don Tito" + pagina. Import de reportlab lazy. REQUIERE agregar
+      'reportlab' al requirements.txt del deploy.
 """
 import streamlit as st
 import pandas as pd
@@ -79,7 +86,7 @@ import plotly.graph_objects as go
 import calendar
 import io
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -301,6 +308,166 @@ def _num_txt(v, dec=0):
         return fnum(float(str(v).replace(",", ".")), dec)
     except Exception:
         return str(v)
+
+# === INFORME PDF DEL CUADERNO (reportlab) v3.8 ===
+# (bg pill, texto pill, barra izquierda) por tipo
+TIPO_COLOR_PDF = {
+    "observacion":  ("#E1F5EE", "#085041", "#5DCAA5"),
+    "intervencion": ("#FAEEDA", "#633806", "#EF9F27"),
+    "medicion":     ("#EAF3DE", "#27500A", "#97C459"),
+}
+
+def _pdf_fecha(fh):
+    s = str(fh).split(" ")[0]
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except Exception:
+        return s
+
+def generar_pdf_notas(df, desde, hasta, cliente="ZED", logo_path=None):
+    """Devuelve los bytes de un PDF con las notas del período, agrupadas Campo -> Potrero
+    -> notas cronológicas ascendentes. Import de reportlab lazy."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+                                     KeepTogether, Image)
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    VERDE   = colors.HexColor("#1B5E20")
+    MUTED   = colors.HexColor("#888888")
+    BORDE   = colors.HexColor("#DDDDDD")
+    ss = getSampleStyleSheet()
+    STY = {
+        "titulo":   ParagraphStyle("t", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=15, textColor=colors.HexColor("#2C2C2A"), leading=18),
+        "subt":     ParagraphStyle("s", parent=ss["Normal"], fontName="Helvetica", fontSize=10.5, textColor=colors.HexColor("#555555"), leading=13),
+        "meta_lbl": ParagraphStyle("ml", parent=ss["Normal"], fontName="Helvetica", fontSize=8.5, textColor=MUTED, leading=11),
+        "meta_val": ParagraphStyle("mv", parent=ss["Normal"], fontName="Helvetica", fontSize=9.5, textColor=colors.HexColor("#2C2C2A"), leading=12),
+        "campo":    ParagraphStyle("c", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=12, textColor=colors.white, leading=15),
+        "potrero":  ParagraphStyle("p", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=10.5, textColor=colors.HexColor("#2C2C2A"), leading=13),
+        "desc":     ParagraphStyle("d", parent=ss["Normal"], fontName="Helvetica", fontSize=9.5, textColor=colors.HexColor("#2C2C2A"), leading=12),
+        "det":      ParagraphStyle("de", parent=ss["Normal"], fontName="Helvetica", fontSize=8.5, textColor=colors.HexColor("#555555"), leading=13),
+        "badge":    ParagraphStyle("b", parent=ss["Normal"], fontName="Helvetica", fontSize=8.5, leading=12),
+    }
+    ANCHO = A4[0] - 34*mm
+
+    def _det(v, dec=0):
+        if v is None or str(v).strip() in ("", "-", "nan"):
+            return "—"
+        try:
+            return fnum(float(str(v).replace(",", ".")), dec)
+        except Exception:
+            return str(v)
+
+    def _card(filas, tipo):
+        bg, fg, bar = TIPO_COLOR_PDF.get(tipo, ("#F1EFE8", "#2C2C2A", "#B4B2A9"))
+        r0 = filas[0]
+        label = TIPO_LABEL.get(tipo, tipo.capitalize())
+        cab = (f'<font backColor="{bg}" color="{fg}"> {label} </font>'
+               f'&nbsp;&nbsp;<font color="#888888">{_pdf_fecha(r0["fecha_hora"])} · {r0["autor"]}</font>')
+        piezas = [Paragraph(cab, STY["badge"]), Spacer(1, 3)]
+        if str(r0.get("descripcion", "")).strip():
+            piezas.append(Paragraph(str(r0["descripcion"]), STY["desc"]))
+        if tipo == "medicion":
+            lin = []
+            for r in sorted(filas, key=lambda x: str(x.get("n_muestra", ""))):
+                lin.append(f'<font color="#888888">M{r.get("n_muestra","")}</font> '
+                           f'{_det(r.get("kg_materia_verde"))} MV · {_det(r.get("kg_materia_seca"))} MS · {_det(r.get("%_materia_seca"),1)}%')
+            piezas += [Spacer(1, 2), Paragraph("<br/>".join(lin), STY["det"])]
+        elif tipo == "intervencion":
+            p = []
+            if str(r0.get("producto","")).strip(): p.append(f'<font color="#888888">Producto</font> {r0["producto"]}')
+            if str(r0.get("dosis","")).strip():    p.append(f'<font color="#888888">Dosis</font> {r0["dosis"]}')
+            if str(r0.get("metodo","")).strip():   p.append(f'<font color="#888888">Método</font> {r0["metodo"]}')
+            if str(r0.get("costo","")).strip():    p.append(f'<font color="#888888">Costo</font> {r0["costo"]}')
+            if p:
+                piezas += [Spacer(1, 2), Paragraph(" · ".join(p), STY["det"])]
+        inner = Table([[piezas]], colWidths=[ANCHO - 6])
+        inner.setStyle(TableStyle([("LEFTPADDING",(0,0),(-1,-1),8),("RIGHTPADDING",(0,0),(-1,-1),4),
+                                   ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
+                                   ("VALIGN",(0,0),(-1,-1),"TOP")]))
+        card = Table([["", inner]], colWidths=[3, ANCHO - 3])
+        card.setStyle(TableStyle([("BACKGROUND",(0,0),(0,0), colors.HexColor(bar)),
+                                  ("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0),
+                                  ("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0),
+                                  ("VALIGN",(0,0),(-1,-1),"TOP")]))
+        return card
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=17*mm, rightMargin=17*mm,
+                            topMargin=16*mm, bottomMargin=16*mm)
+
+    def _pie(canvas, d):
+        canvas.saveState()
+        canvas.setStrokeColor(BORDE); canvas.setLineWidth(0.4)
+        canvas.line(17*mm, 12*mm, A4[0]-17*mm, 12*mm)
+        canvas.setFont("Helvetica", 8); canvas.setFillColor(MUTED)
+        canvas.drawString(17*mm, 8*mm, "Seguimiento Forrajero — Don Tito")
+        canvas.drawRightString(A4[0]-17*mm, 8*mm, f"Página {d.page}")
+        canvas.restoreState()
+
+    story = []
+    titblock = [Paragraph("Cuaderno de campo", STY["titulo"]),
+                Paragraph("Informe de recorridas", STY["subt"])]
+    if logo_path and os.path.exists(logo_path):
+        try:
+            logo = Image(logo_path, width=16*mm, height=16*mm)
+            head = Table([[titblock, logo]], colWidths=[ANCHO-20*mm, 20*mm])
+            head.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(1,0),(1,0),"RIGHT"),
+                                      ("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0)]))
+            story.append(head)
+        except Exception:
+            story += titblock
+    else:
+        story += titblock
+    story.append(Spacer(1, 4))
+    hr = Table([[""]], colWidths=[ANCHO]); hr.setStyle(TableStyle([("LINEBELOW",(0,0),(-1,-1),1.2,VERDE)]))
+    story += [hr, Spacer(1, 6)]
+
+    def _meta(lbl, val):
+        return [Paragraph(lbl, STY["meta_lbl"]), Paragraph(val, STY["meta_val"])]
+    per = f"{_pdf_fecha(desde)} – {_pdf_fecha(hasta)}"
+    gen = datetime.now(TZ_AR).strftime("%d/%m/%Y")
+    mt = Table([[_meta("Cliente", cliente), _meta("Período", per), _meta("Generado", gen)]],
+               colWidths=[ANCHO*0.25, ANCHO*0.45, ANCHO*0.3])
+    mt.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(0,0),0)]))
+    story += [mt, Spacer(1, 14)]
+
+    d = df.copy()
+    d["_f"] = d["fecha_hora"].astype(str).str.split(" ").str[0]
+    d = d[(d["_f"] >= str(desde)) & (d["_f"] <= str(hasta))]
+
+    if d.empty:
+        story.append(Paragraph("No hay anotaciones en el período seleccionado.", STY["desc"]))
+        doc.build(story, onFirstPage=_pie, onLaterPages=_pie)
+        buf.seek(0); return buf.getvalue()
+
+    for campo in sorted(d["establecimiento"].dropna().unique().tolist()):
+        dc = d[d["establecimiento"] == campo]
+        barra = Table([[Paragraph(campo, STY["campo"])]], colWidths=[ANCHO])
+        barra.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),VERDE),
+                                   ("LEFTPADDING",(0,0),(-1,-1),10),("TOPPADDING",(0,0),(-1,-1),5),
+                                   ("BOTTOMPADDING",(0,0),(-1,-1),5)]))
+        for pi, pot in enumerate(sorted(dc["potrero"].astype(str).unique().tolist())):
+            dp = dc[dc["potrero"].astype(str) == pot].sort_values("fecha_hora")
+            subt = Table([[Paragraph(f"Potrero {pot}", STY["potrero"])]], colWidths=[ANCHO])
+            subt.setStyle(TableStyle([("LINEBELOW",(0,0),(-1,-1),0.5,BORDE),
+                                      ("BOTTOMPADDING",(0,0),(-1,-1),4),("TOPPADDING",(0,0),(-1,-1),0),
+                                      ("LEFTPADDING",(0,0),(-1,-1),0)]))
+            cards = []
+            for fh in sorted(dp["fecha_hora"].unique()):
+                g = dp[dp["fecha_hora"] == fh]
+                for tp in g["tipo"].unique():
+                    cards += [_card(g[g["tipo"] == tp].to_dict("records"), tp), Spacer(1, 6)]
+            head_bloque = ([barra, Spacer(1, 8)] if pi == 0 else []) + [subt, Spacer(1, 6)]
+            story.append(KeepTogether(head_bloque + cards[:2]))
+            for b in cards[2:]:
+                story.append(b)
+            story.append(Spacer(1, 6))
+        story.append(Spacer(1, 6))
+
+    doc.build(story, onFirstPage=_pie, onLaterPages=_pie)
+    buf.seek(0); return buf.getvalue()
 
 st.markdown("""
 <style>
@@ -2661,9 +2828,40 @@ def _tab9_render():
                 except Exception as e:
                     st.error(f"No se pudo actualizar: {e}")
 
+    # ---------------- INFORME PDF ----------------
+    st.markdown("---")
+    st.markdown('<div class="section-title" style="font-size:1rem;">Descargar informe PDF</div>', unsafe_allow_html=True)
+    st.caption("Anotaciones del período, agrupadas por campo y potrero (solo los que tengan notas).")
+    _hoy = datetime.now(TZ_AR).date()
+    pc1, pc2 = st.columns(2)
+    with pc1:
+        _desde = st.date_input("Desde", value=_hoy - timedelta(days=30), format="YYYY-MM-DD", key="pdf_desde")
+    with pc2:
+        _hasta = st.date_input("Hasta", value=_hoy, format="YYYY-MM-DD", key="pdf_hasta")
+
+    if st.button("📄 Generar informe", key="pdf_generar"):
+        if _desde > _hasta:
+            st.error("La fecha 'Desde' no puede ser posterior a 'Hasta'.")
+        else:
+            try:
+                _logo = os.path.join(os.path.dirname(__file__), "logo_dontito.png")
+                _pdf = generar_pdf_notas(_df_notas, _desde, _hasta,
+                                         cliente="ZED", logo_path=_logo)
+                st.session_state["pdf_bytes"] = _pdf
+                st.session_state["pdf_nombre"] = f"cuaderno_{_desde}_{_hasta}.pdf"
+            except ModuleNotFoundError:
+                st.error("Falta la librería reportlab en el deploy. Agregá 'reportlab' al requirements.txt.")
+            except Exception as e:
+                st.error(f"No se pudo generar el PDF: {e}")
+
+    if st.session_state.get("pdf_bytes"):
+        st.download_button("⬇️ Descargar PDF", data=st.session_state["pdf_bytes"],
+                           file_name=st.session_state.get("pdf_nombre", "cuaderno.pdf"),
+                           mime="application/pdf", key="pdf_download")
+
 with tab9:
     _tab9_render()
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.7 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v3.8 · — DON TITO —</div>', unsafe_allow_html=True)
