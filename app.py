@@ -86,6 +86,10 @@ v4.0: Nombre del PDF descargado con formato AAAAMMDD_cuaderno_campo_EMPRESA.pdf
       (_cliente="ZED" por ahora) para adaptarse al multi-cliente a futuro.
 v4.1: PDF: logo de la caratula a 24 mm (antes 16). Subtitulo cambia de "Informe
       de recorridas" a "Anotaciones de recorridas".
+v4.2: Se elimina la pestaña DISTRIBUCIÓN (tab3) y la hoja "Distribución" del
+      Excel consolidado (ahora 5 hojas). Bloque autocontenido: no afectaba a
+      ninguna otra pestaña. Verificado: compila, AST ok, sin referencias
+      huerfanas, 8 pestañas restantes intactas.
 """
 import streamlit as st
 import pandas as pd
@@ -954,7 +958,6 @@ sector_sel = "Todos"
 _ss_defaults = {
     "cs": camps[-1] if camps else None,
     "cd": "Todos",
-    "unidad_tab3": "kgMS",
     "cp":         campos[0] if campos else None,
     "csup": campos[0] if campos else None,
     "pot_hist": None,
@@ -963,7 +966,7 @@ for _k, _v in _ss_defaults.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
-tab1,tab2,tab3,tab6,tab7,tab5,tab4,tab8,tab9 = st.tabs(["TABLERO","DINÁMICA","DISTRIBUCIÓN","CONSUMO","STOCK","HISTÓRICA","SUPERFICIES","MAPA","NOTAS"])
+tab1,tab2,tab6,tab7,tab5,tab4,tab8,tab9 = st.tabs(["TABLERO","DINÁMICA","CONSUMO","STOCK","HISTÓRICA","SUPERFICIES","MAPA","NOTAS"])
 
 # TAB 1
 with tab1:
@@ -1265,63 +1268,6 @@ with tab2:
             st.dataframe(pv.style.format(fmt, na_rep="—").background_gradient(cmap="YlGn",axis=None,subset=[c for c in pv.columns if c!="Acumulado"]).background_gradient(cmap="YlGn",subset=["Acumulado"]), use_container_width=True, height=600)
 
     _tab2_render()
-
-# TAB 3
-with tab3:
-    btn_actualizar()
-    @st.fragment
-    def _tab3_render():
-        st.markdown('<div class="section-title">DISTRIBUCIÓN POR POTRERO</div>', unsafe_allow_html=True)
-        # Selector de unidad
-        unidad = st.radio("Unidad de visualización:", ["kgMS","Raciones"], horizontal=True, key="unidad_tab3")
-        es_rac = unidad == "Raciones"
-        lbl_u = "Raciones" if es_rac else "kgMS"
-        lbl_ha = "Rac/ha" if es_rac else "kgMS/ha"
-        divisor = KGMS_POR_RACION if es_rac else 1
-        st.markdown(f"*PPNA acumulada ({lbl_ha}) × Superficie efectiva (ha) = {lbl_u} totales*" + (f" · **1 ración = {fnum(KGMS_POR_RACION, 1)} kgMS**" if es_rac else ""))
-        _cp_idx = campos.index(st.session_state["cp"]) if st.session_state["cp"] in campos else 0
-        cp = st.selectbox("Campo:", campos, index=_cp_idx, format_func=lambda x:NOMBRE_CAMPOS.get(x,x), key="cp")
-        dp = acum_pot_sup[(acum_pot_sup["campo"]==cp)&(acum_pot_sup["campania"]==camp_act)].copy()
-        if not dp.empty:
-            # Aplicar conversión
-            dp["val_acum"] = dp["PPNA_acum"] / divisor
-            dp["val_tot"] = dp["kgMS_tot"] / divisor
-            nc = NOMBRE_CAMPOS.get(cp,cp); tk = dp["val_tot"].sum(); pp = dp["val_acum"].mean(); se = dp["sup_util"].sum()
-            c1,c2,c3 = st.columns(3)
-            with c1: st.metric(f"{lbl_u} Totales",fnum(tk))
-            with c2: st.metric(f"Acum. Promedio",f"{fnum(pp)} {lbl_ha}")
-            with c3: st.metric("Sup. Útil",f"{fnum(se)} ha")
-            st.markdown("---")
-            ctr,crk = st.columns([3,2])
-            with ctr:
-                st.markdown(f"**{nc}** — {lbl_u} totales por potrero")
-                dt = dp.dropna(subset=["val_tot"]); dt = dt[dt["val_tot"]>0]
-                if not dt.empty:
-                    ft = px.treemap(dt, path=["sector","potrero"], values="val_tot", color="val_acum",
-                        color_continuous_scale=["#B71C1C","#EF5350","#E0E0E0","#66BB6A","#1B5E20"],
-                        color_continuous_midpoint=pp, labels={"val_tot":lbl_u,"val_acum":lbl_ha}, hover_data={"sup_util":":.1f"})
-                    ft.update_layout(height=550,margin=dict(t=30,l=0,r=0,b=0),separators=",.")
-                    st.plotly_chart(ft, use_container_width=True)
-            with crk:
-                st.markdown(f"**Ranking por {lbl_u} Totales**")
-                ds = dp.sort_values("val_tot",ascending=True).tail(30)
-                pr = dp["val_tot"].mean(); sg = dp["val_tot"].std()
-                ds["color"] = ds["val_tot"].apply(lambda x: color_pot(x,pr,sg))
-                fr = go.Figure()
-                for _,r in ds.iterrows():
-                    fr.add_trace(go.Bar(y=[r["potrero"]],x=[r["val_tot"]],orientation="h",marker_color=r["color"],
-                        text=[fnum(r["val_tot"])],textposition="outside",showlegend=False,
-                        hovertemplate=f"<b>{r['potrero']}</b><br>{lbl_u}: {fnum(r['val_tot'])}<br>{lbl_ha}: {fnum(r['val_acum'])}<br>Sup útil: {fnum(r['sup_util'])} ha<extra></extra>"))
-                fr.add_vline(x=pr,line_dash="dash",line_color="#333",annotation_text=f"Prom: {fnum(pr)}",annotation_position="top")
-                fr.update_layout(height=max(450,len(ds)*22),template="plotly_white",xaxis_title=f"{lbl_u} totales",margin=dict(l=0),yaxis=dict(categoryorder="total ascending"),separators=",.")
-                st.plotly_chart(fr, use_container_width=True)
-            st.markdown(f"### Detalle por Potrero")
-            dd = dp[["potrero","sup_util","val_acum","val_tot"]].copy()
-            dd.columns = ["Potrero","Sup.Útil(ha)",f"Acum.({lbl_ha})",f"{lbl_u} Totales"]
-            dd = dd.sort_values(f"{lbl_u} Totales",ascending=False)
-            st.dataframe(dd.style.format({"Sup.Útil(ha)": lambda x: fnum(x,1), f"Acum.({lbl_ha})": lambda x: fnum(x,0), f"{lbl_u} Totales": lambda x: fnum(x,0)}).background_gradient(subset=[f"{lbl_u} Totales"],cmap="YlGn"), use_container_width=True, hide_index=True, height=500)
-
-    _tab3_render()
 
 # TAB 4
 with tab4:
@@ -2305,16 +2251,7 @@ with tab7:
                                 ws2 = wb.create_sheet()
                                 write_sheet(ws2, pv_exp.reset_index(), "PPNA Diaria")
 
-                            # Hoja 3: Distribución
-                            dist_exp = acum_pot_sup[acum_pot_sup["campania"]==camp_stk_sel].copy()
-                            if not dist_exp.empty:
-                                dist_exp = dist_exp[["campo","potrero","sup_util","PPNA_acum","kgMS_tot"]].copy()
-                                dist_exp.columns = ["Campo","Potrero","Sup.Útil(ha)","Acum.(kgMS/ha)","kgMS Totales"]
-                                dist_exp = dist_exp.sort_values("kgMS Totales", ascending=False)
-                                ws3 = wb.create_sheet()
-                                write_sheet(ws3, dist_exp, "Distribución")
-
-                            # Hoja 4: Consumo por potrero y mes
+                            # Hoja 3: Consumo por potrero y mes
                             if not df_consumo.empty:
                                 # Rebuild consumo with mapping (same logic as tab6)
                                 if "potrero_al" in df_clasif.columns:
@@ -2880,4 +2817,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v4.1 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v4.2 · — DON TITO —</div>', unsafe_allow_html=True)
