@@ -90,6 +90,13 @@ v4.2: Se elimina la pestaña DISTRIBUCIÓN (tab3) y la hoja "Distribución" del
       Excel consolidado (ahora 5 hojas). Bloque autocontenido: no afectaba a
       ninguna otra pestaña. Verificado: compila, AST ok, sin referencias
       huerfanas, 8 pestañas restantes intactas.
+v4.3: Fix layout: se quita el @st.fragment de la pestaña NOTAS (estaba definido
+      a nivel modulo y llamado dentro de with tab9). Al interactuar, ese fragment
+      perdia el contenedor de la pestaña y Streamlit mostraba todos los paneles
+      apilados (rompiendo la navegacion en toda la app). Sus rerun pasan a
+      completos. Los fragments de las otras pestañas (definidos dentro de su
+      with) no se tocan. Notas puede sentirse un poco mas pesada al interactuar
+      (rerun completo), pero con el cache lee de memoria.
 """
 import streamlit as st
 import pandas as pd
@@ -2558,7 +2565,6 @@ with tab8:
     _tab8_render()
 
 # TAB 9 — CUADERNO DE CAMPO (NOTAS)
-@st.fragment
 def _tab9_render():
     st.markdown('<div class="section-title">CUADERNO DE CAMPO</div>', unsafe_allow_html=True)
     st.caption("Historia clínica de cada potrero · observaciones, intervenciones y mediciones")
@@ -2630,11 +2636,11 @@ def _tab9_render():
         with bcol1:
             if st.button("➕ Agregar muestra", key="notas_add"):
                 st.session_state["notas_nm"] += 1
-                st.rerun(scope="fragment")
+                st.rerun()
         with bcol2:
             if st.session_state["notas_nm"] > 1 and st.button("➖ Quitar", key="notas_del"):
                 st.session_state["notas_nm"] -= 1
-                st.rerun(scope="fragment")
+                st.rerun()
 
     if st.button("💾 Guardar nota", type="primary", key="notas_guardar"):
         if not _pots or _pot == "—":
@@ -2664,7 +2670,7 @@ def _tab9_render():
                 st.session_state["notas_formid"] += 1
                 st.session_state["notas_nm"] = 1
                 st.toast("Nota guardada ✅")
-                st.rerun(scope="fragment")
+                st.rerun()
             except Exception as e:
                 st.error(f"No se pudo guardar: {e}")
 
@@ -2679,7 +2685,7 @@ def _tab9_render():
         if st.button("🔄 Actualizar notas", key="notas_refresh"):
             notas_leer.clear()
             notas_lista.clear()
-            st.rerun(scope="fragment")
+            st.rerun()
 
     _hpot     = _pot
     _df_notas = notas_leer()
@@ -2770,7 +2776,7 @@ def _tab9_render():
                     if notas_actualizar(_id_e, fila):
                         notas_leer.clear()
                         st.success("Entrada actualizada.")
-                        st.rerun(scope="fragment")
+                        st.rerun()
                     else:
                         st.error("No se encontró la entrada.")
                 except Exception as e:
@@ -2817,4 +2823,4 @@ with tab9:
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v4.2 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v4.3 · — DON TITO —</div>', unsafe_allow_html=True)
