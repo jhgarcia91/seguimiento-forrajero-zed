@@ -110,6 +110,11 @@ v5.1: Velocidad. Al quitar los fragments, cada clic hace rerun completo y
       (ttl=43200) con hash_funcs barato (shape + columnas) para no pagar el costo
       de hashear DataFrames grandes. Correcto porque los datos no cambian entre
       refrescos y "Actualizar" limpia el cache.
+v5.2: Version limpia (se saca el panel temporal de diagnostico de tiempos de
+      v5.1-DIAG). El diagnostico confirmo que el servidor responde en ~0.3s
+      (tablero) y ~0.1s (notas); los calculos y la lectura de notas salen de
+      cache. La app quedo rapida; la latencia residual es el ida/vuelta de
+      Streamlit Cloud, no el codigo.
 """
 import streamlit as st
 import pandas as pd
@@ -119,9 +124,6 @@ import plotly.graph_objects as go
 import calendar
 import io
 import base64
-import time as _time
-_T_START = _time.perf_counter()
-_tmr = {}
 import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -876,11 +878,9 @@ st.markdown(f'''
 
 # === CARGA DE DATOS ===
 with st.spinner("🔄 Conectando con Google Drive y cargando datos..."):
-    _t0 = _time.perf_counter()
     df_seg, nombres_seg = cargar_seguimiento_drive()
     df_clasif, df_eur, nombres_conf = cargar_config_drive()
     df_era5 = cargar_era5_drive()
-    _tmr["1. Carga Drive (seg/conf/era5)"] = _time.perf_counter() - _t0
 
 # Filtro de potreros excluidos (monte): se sacan de seguimiento y clasificación,
 # con lo que quedan afuera de PPNA, stock, superficies, consumo (el merge por
@@ -948,16 +948,12 @@ if df_seg.empty or df_clasif.empty or df_eur.empty or df_era5.empty:
         """)
     st.stop()
 
-_t0 = _time.perf_counter()
 df_ppna = calcular_ppna(df_seg, df_eur, df_era5)
 mensual = calcular_mensual(df_ppna, df_era5)
 acum_campo, acum_pot = calcular_acumulada(mensual, df_clasif)
 tc, um, ua, uf = tc_campo_fn(df_ppna)
-_tmr["2. Cálculos (ppna/mensual/acum/tc)"] = _time.perf_counter() - _t0
 
-_t0 = _time.perf_counter()
 df_consumo, df_confl_consumo = cargar_consumo_drive()
-_tmr["3. Carga consumo"] = _time.perf_counter() - _t0
 
 # Nota: la resolucion de exports superpuestos (dedup por modifiedTime) sigue
 # activa dentro de cargar_consumo_drive(); df_consumo ya viene limpio.
@@ -1008,9 +1004,6 @@ for _k, _v in _ss_defaults.items():
 
 SECCIONES = ["TABLERO","DINÁMICA","CONSUMO","STOCK","HISTÓRICA","SUPERFICIES","MAPA","NOTAS"]
 seccion = st.radio("Sección", SECCIONES, horizontal=True, key="seccion_activa", label_visibility="collapsed")
-
-_diag_ph = st.empty()  # DIAG: panel de tiempos (se llena al final)
-_t_sec = _time.perf_counter()
 
 # TAB 1
 if seccion == "TABLERO":
@@ -2401,9 +2394,7 @@ elif seccion == "MAPA":
         st.markdown('<div class="section-title">MAPA DE STOCK DISPONIBLE</div>', unsafe_allow_html=True)
         st.caption("Stock por potrero sobre imagen satelital. Color relativo al promedio de stock del establecimiento.")
 
-        _t0 = _time.perf_counter()
         gdf = cargar_shapefile()
-        _tmr["M. Cargar shapefile"] = _time.perf_counter() - _t0
         if gdf is None:
             st.warning("No se encontró el shapefile de potreros. Verificá que `potreros_combinados_ZED.shp` (y archivos asociados) estén en la misma carpeta que la app.")
             return
@@ -2721,9 +2712,7 @@ def _tab9_render():
             st.rerun()
 
     _hpot     = _pot
-    _t0 = _time.perf_counter()
     _df_notas = notas_leer()
-    _tmr["N. Leer notas (Google Sheet)"] = _time.perf_counter() - _t0
     _hest_nom = NOMBRE_CAMPOS.get(_est, _est)
     if _df_notas.empty:
         st.info("Todavía no hay notas cargadas.")
@@ -2857,13 +2846,5 @@ if seccion == "NOTAS":
     _tab9_render()
 
 
-_tmr[f"4. Render sección ({seccion})"] = _time.perf_counter() - _t_sec
-_tmr["TOTAL (todo el refresco)"] = _time.perf_counter() - _T_START
-with _diag_ph.container():
-    st.warning("⏱️ DIAGNÓSTICO DE VELOCIDAD (temporal) — tiempos del último refresco:")
-    _filas_diag = [{"Etapa": _k, "Segundos": round(_v, 2)} for _k, _v in _tmr.items()]
-    st.table(pd.DataFrame(_filas_diag))
-    st.caption("Si una etapa marca ~0.00 salió de cache. El número más alto es el culpable.")
-
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v5.1-DIAG · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v5.2 · — DON TITO —</div>', unsafe_allow_html=True)
