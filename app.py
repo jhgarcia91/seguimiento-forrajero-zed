@@ -121,6 +121,12 @@ v5.3: Botón "Eliminar" (rojo) en el editor de notas, al lado de "Actualizar
       Pide confirmacion (Sí, eliminar / Cancelar) antes de borrar. Nueva funcion
       notas_eliminar() via deleteDimension. No se toca carga/historial/edicion
       ni el resto de la app.
+v5.4: Segundo informe PDF (filtrado) en la sección Informes de NOTAS, debajo del
+      general. Tres filtros: tipo (Todos/observacion/intervencion/medicion), campo
+      (Todos/los 4) y rango de fechas. Reusa generar_pdf_notas con parametros
+      opcionales tipo_filtro/campo_filtro (el informe general no se toca: sin esos
+      params sale igual que siempre). Muestra los filtros en la caratula y una
+      linea "Vas a generar..." antes de descargar. Mismo diseño que el general.
 """
 import streamlit as st
 import pandas as pd
@@ -402,10 +408,13 @@ def _pdf_fecha(fh):
     except Exception:
         return s
 
-def generar_pdf_notas(df, desde, hasta, cliente="ZED", logo_data=None):
+def generar_pdf_notas(df, desde, hasta, cliente="ZED", logo_data=None,
+                      tipo_filtro=None, campo_filtro=None):
     """Devuelve los bytes de un PDF con las notas del período, agrupadas Campo -> Potrero
     -> notas cronológicas ascendentes. 'logo_data' es un file-like (BytesIO) opcional.
-    Import de reportlab lazy."""
+    tipo_filtro (código: observacion/intervencion/medicion) y campo_filtro (nombre del
+    establecimiento) son opcionales; si no se pasan, el informe sale completo (igual que
+    siempre). Import de reportlab lazy."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib import colors
@@ -512,12 +521,26 @@ def generar_pdf_notas(df, desde, hasta, cliente="ZED", logo_data=None):
     mt.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(0,0),0)]))
     story += [mt, Spacer(1, 14)]
 
+    # línea de filtros aplicados (solo si hay alguno)
+    _filtros_txt = []
+    if tipo_filtro and tipo_filtro != "Todos":
+        _filtros_txt.append(f"Tipo: {TIPO_LABEL.get(tipo_filtro, tipo_filtro)}")
+    if campo_filtro and campo_filtro != "Todos":
+        _filtros_txt.append(f"Campo: {campo_filtro}")
+    if _filtros_txt:
+        story.append(Paragraph("<font color='#888888'>Filtros — </font>" + " · ".join(_filtros_txt), STY["det"]))
+        story.append(Spacer(1, 12))
+
     d = df.copy()
     d["_f"] = d["fecha_hora"].astype(str).str.split(" ").str[0]
     d = d[(d["_f"] >= str(desde)) & (d["_f"] <= str(hasta))]
+    if tipo_filtro and tipo_filtro != "Todos":
+        d = d[d["tipo"] == tipo_filtro]
+    if campo_filtro and campo_filtro != "Todos":
+        d = d[d["establecimiento"] == campo_filtro]
 
     if d.empty:
-        story.append(Paragraph("No hay anotaciones en el período seleccionado.", STY["desc"]))
+        story.append(Paragraph("No hay anotaciones para los filtros y el período seleccionados.", STY["desc"]))
         doc.build(story, onFirstPage=_pie, onLaterPages=_pie)
         buf.seek(0); return buf.getvalue()
 
@@ -2874,10 +2897,10 @@ def _tab9_render():
                         st.session_state.pop("notas_confirm_del", None)
                         st.rerun()
 
-    # ---------------- INFORME PDF ----------------
+    # ---------------- INFORME GENERAL ----------------
     st.markdown("---")
-    st.markdown('<div class="section-title" style="font-size:1rem;">Descargar informe PDF</div>', unsafe_allow_html=True)
-    st.caption("Anotaciones del período, agrupadas por campo y potrero (solo los que tengan notas).")
+    st.markdown('<div class="section-title" style="font-size:1rem;">Informe general del cuaderno</div>', unsafe_allow_html=True)
+    st.caption("Todas las anotaciones del período, agrupadas por campo y potrero (solo los que tengan notas).")
     _hoy = datetime.now(TZ_AR).date()
     pc1, pc2 = st.columns(2)
     with pc1:
@@ -2910,9 +2933,62 @@ def _tab9_render():
                            file_name=st.session_state.get("pdf_nombre", "cuaderno.pdf"),
                            mime="application/pdf", key="pdf_download")
 
+    # ---------------- INFORME FILTRADO ----------------
+    st.markdown("---")
+    st.markdown('<div class="section-title" style="font-size:1rem;">Informe filtrado</div>', unsafe_allow_html=True)
+    st.caption("Elegí tipo, campo y período. Mismo diseño, solo con lo que pediste.")
+    _TIPOS_FILTRO = {"Todos": "Todos", "Observación": "observacion",
+                     "Intervención": "intervencion", "Medición": "medicion"}
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        _tf_lbl = st.selectbox("Tipo", list(_TIPOS_FILTRO.keys()), key="pdf_f_tipo")
+    with fc2:
+        _cf_sel = st.selectbox("Campo", ["Todos"] + _campos_notas,
+                               format_func=lambda x: "Todos" if x == "Todos" else NOMBRE_CAMPOS.get(x, x),
+                               key="pdf_f_campo")
+    fc3, fc4 = st.columns(2)
+    with fc3:
+        _f_desde = st.date_input("Desde", value=_hoy - timedelta(days=90), format="YYYY-MM-DD", key="pdf_f_desde")
+    with fc4:
+        _f_hasta = st.date_input("Hasta", value=_hoy, format="YYYY-MM-DD", key="pdf_f_hasta")
+
+    _tf_code = _TIPOS_FILTRO[_tf_lbl]
+    _cf_nom = "Todos" if _cf_sel == "Todos" else NOMBRE_CAMPOS.get(_cf_sel, _cf_sel)
+    _res = []
+    _res.append("Todos los tipos" if _tf_lbl == "Todos" else _tf_lbl)
+    _res.append("Todos los campos" if _cf_sel == "Todos" else _cf_nom)
+    _res.append(f"{_f_desde.strftime('%d/%m/%Y')} – {_f_hasta.strftime('%d/%m/%Y')}")
+    st.caption("🔎 Vas a generar: " + " · ".join(_res))
+
+    if st.button("📄 Generar informe filtrado", key="pdf_f_generar"):
+        if _f_desde > _f_hasta:
+            st.error("La fecha 'Desde' no puede ser posterior a 'Hasta'.")
+        else:
+            try:
+                try:
+                    _logo_io2 = io.BytesIO(base64.b64decode(LOGO_DT))
+                except Exception:
+                    _logo_io2 = None
+                _cliente2 = "ZED"
+                _pdf_f = generar_pdf_notas(_df_notas, _f_desde, _f_hasta,
+                                           cliente=_cliente2, logo_data=_logo_io2,
+                                           tipo_filtro=_tf_code, campo_filtro=_cf_nom)
+                st.session_state["pdf_f_bytes"] = _pdf_f
+                _hoy_str2 = datetime.now(TZ_AR).strftime("%Y%m%d")
+                st.session_state["pdf_f_nombre"] = f"{_hoy_str2}_cuaderno_filtrado_{_cliente2}.pdf"
+            except ModuleNotFoundError:
+                st.error("Falta la librería reportlab en el deploy. Agregá 'reportlab' al requirements.txt.")
+            except Exception as e:
+                st.error(f"No se pudo generar el PDF: {e}")
+
+    if st.session_state.get("pdf_f_bytes"):
+        st.download_button("⬇️ Descargar PDF filtrado", data=st.session_state["pdf_f_bytes"],
+                           file_name=st.session_state.get("pdf_f_nombre", "cuaderno_filtrado.pdf"),
+                           mime="application/pdf", key="pdf_f_download")
+
 if seccion == "NOTAS":
     _tab9_render()
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v5.3 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v5.4 · — DON TITO —</div>', unsafe_allow_html=True)
