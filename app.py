@@ -115,6 +115,12 @@ v5.2: Version limpia (se saca el panel temporal de diagnostico de tiempos de
       (tablero) y ~0.1s (notas); los calculos y la lectura de notas salen de
       cache. La app quedo rapida; la latencia residual es el ida/vuelta de
       Streamlit Cloud, no el codigo.
+v5.3: Botón "Eliminar" (rojo) en el editor de notas, al lado de "Actualizar
+      entrada". Borra la entrada/fila seleccionada por id_nota (una por una,
+      respeta la logica de fila; en mediciones borra solo la muestra elegida).
+      Pide confirmacion (Sí, eliminar / Cancelar) antes de borrar. Nueva funcion
+      notas_eliminar() via deleteDimension. No se toca carga/historial/edicion
+      ni el resto de la app.
 """
 import streamlit as st
 import pandas as pd
@@ -334,6 +340,39 @@ def notas_actualizar(id_nota, fila_valores):
         valueInputOption="USER_ENTERED", body={"values": [fila_valores]}).execute()
     return True
 
+def notas_eliminar(id_nota):
+    """Elimina la fila cuyo id_nota coincide (borra la fila entera, no la deja vacía)."""
+    service = get_sheets_service()
+    if not service:
+        return False
+    # ubicar la fila por id_nota
+    res = service.spreadsheets().values().get(
+        spreadsheetId=SHEET_NOTAS_ID, range=f"{NOTAS_TAB}!A2:A").execute()
+    ids = [r[0] if r else "" for r in res.get("values", [])]
+    try:
+        idx = ids.index(id_nota)
+    except ValueError:
+        return False
+    # obtener el sheetId numérico de la pestaña 'notas'
+    meta = service.spreadsheets().get(spreadsheetId=SHEET_NOTAS_ID).execute()
+    sheet_id = None
+    for sh in meta.get("sheets", []):
+        if sh.get("properties", {}).get("title") == NOTAS_TAB:
+            sheet_id = sh["properties"]["sheetId"]
+            break
+    if sheet_id is None:
+        return False
+    # borrar la fila (startIndex 0-based: fila de datos idx -> fila hoja idx+1)
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SHEET_NOTAS_ID,
+        body={"requests": [{
+            "deleteDimension": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS",
+                          "startIndex": idx + 1, "endIndex": idx + 2}
+            }
+        }]}).execute()
+    return True
+
 def notas_nuevo_id(base_dt, suf=None):
     """id_nota único: timestamp compacto (+ sufijo de muestra si aplica)."""
     base = base_dt.strftime("%Y%m%d%H%M%S")
@@ -530,6 +569,9 @@ st.markdown("""
     div[role="radiogroup"] > label:has(input:checked) { background: #E8F5E9; }
     div[role="radiogroup"] > label:has(input:checked) div { color: #1B5E20 !important; }
     div[role="radiogroup"] > label > div:first-child { display: none; }
+    /* === BOTONES DE ELIMINAR (rojo) === */
+    .st-key-notas_del_btn button, .st-key-notas_del_yes button { background: #C62828 !important; color: #fff !important; border-color: #C62828 !important; }
+    .st-key-notas_del_btn button:hover, .st-key-notas_del_yes button:hover { background: #B71C1C !important; border-color: #B71C1C !important; }
     /* === KPI CARDS === */
     .kpi-card { background: #f8f8f8; border-radius: 10px; padding: 1rem 1.2rem; text-align: center; min-height: 240px; position: relative; overflow: hidden; border: none; box-shadow: none; border-left: none; }
     .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 10px 10px 0 0; }
@@ -2788,23 +2830,49 @@ def _tab9_render():
                 with ec1: nuevos["kg_materia_verde"] = st.number_input("kg MV", min_value=0.0, value=_vmv, step=10.0, format="%.0f", key=f"notas_edit_mv_{_id_e}")
                 with ec2: nuevos["kg_materia_seca"] = st.number_input("kg MS", min_value=0.0, value=_vms, step=10.0, format="%.0f", key=f"notas_edit_ms_{_id_e}")
                 with ec3: nuevos["%_materia_seca"] = st.number_input("% MS", min_value=0.0, max_value=100.0, value=_vpm, step=0.1, format="%.1f", key=f"notas_edit_pm_{_id_e}")
-            if st.button("Actualizar entrada", key="notas_edit_btn"):
-                fila = []
-                for col in NOTAS_COLS:
-                    if col in nuevos:
-                        v = nuevos[col]
-                        fila.append("" if v is None else v)
-                    else:
-                        fila.append(_r[col])
-                try:
-                    if notas_actualizar(_id_e, fila):
-                        notas_leer.clear()
-                        st.success("Entrada actualizada.")
+            _bcol1, _bcol2 = st.columns([1, 1])
+            with _bcol1:
+                if st.button("Actualizar entrada", key="notas_edit_btn"):
+                    fila = []
+                    for col in NOTAS_COLS:
+                        if col in nuevos:
+                            v = nuevos[col]
+                            fila.append("" if v is None else v)
+                        else:
+                            fila.append(_r[col])
+                    try:
+                        if notas_actualizar(_id_e, fila):
+                            notas_leer.clear()
+                            st.success("Entrada actualizada.")
+                            st.rerun()
+                        else:
+                            st.error("No se encontró la entrada.")
+                    except Exception as e:
+                        st.error(f"No se pudo actualizar: {e}")
+            with _bcol2:
+                if st.button("🗑️ Eliminar", key="notas_del_btn"):
+                    st.session_state["notas_confirm_del"] = _id_e
+                    st.rerun()
+            # confirmación de borrado (solo para la entrada elegida)
+            if st.session_state.get("notas_confirm_del") == _id_e:
+                st.warning("¿Eliminar esta entrada? Esta acción no se puede deshacer.")
+                _dc1, _dc2 = st.columns([1, 1])
+                with _dc1:
+                    if st.button("Sí, eliminar", key="notas_del_yes"):
+                        try:
+                            if notas_eliminar(_id_e):
+                                notas_leer.clear()
+                                st.session_state.pop("notas_confirm_del", None)
+                                st.toast("Entrada eliminada 🗑️")
+                                st.rerun()
+                            else:
+                                st.error("No se encontró la entrada.")
+                        except Exception as e:
+                            st.error(f"No se pudo eliminar: {e}")
+                with _dc2:
+                    if st.button("Cancelar", key="notas_del_no"):
+                        st.session_state.pop("notas_confirm_del", None)
                         st.rerun()
-                    else:
-                        st.error("No se encontró la entrada.")
-                except Exception as e:
-                    st.error(f"No se pudo actualizar: {e}")
 
     # ---------------- INFORME PDF ----------------
     st.markdown("---")
@@ -2847,4 +2915,4 @@ if seccion == "NOTAS":
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v5.2 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v5.3 · — DON TITO —</div>', unsafe_allow_html=True)
