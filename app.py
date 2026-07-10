@@ -97,6 +97,13 @@ v4.3: Fix layout: se quita el @st.fragment de la pestaña NOTAS (estaba definido
       completos. Los fragments de las otras pestañas (definidos dentro de su
       with) no se tocan. Notas puede sentirse un poco mas pesada al interactuar
       (rerun completo), pero con el cache lee de memoria.
+v5.0: Navegación reconstruida. Se reemplaza st.tabs (que combinado con fragments
+      rompia el layout mostrando todos los paneles apilados al interactuar) por un
+      menú propio (st.radio horizontal estilado como pills). Ahora se ejecuta y
+      dibuja SOLO la sección elegida (if/elif seccion == ...), no las 8. Esto
+      arregla el layout de raiz y acelera la app (no re-renderiza el mapa ni las 7
+      secciones inactivas en cada clic). Se quitan todos los @st.fragment (ya no
+      hacen falta). Sin cambios en la logica ni el contenido de cada sección.
 """
 import streamlit as st
 import pandas as pd
@@ -505,6 +512,13 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] { background: #E8F5E9; color: #1B5E20; border-bottom: none !important; }
     .stTabs [data-baseweb="tab-list"] button:hover { background: #EEEEEE; }
     .stTabs [data-baseweb="tab-highlight"] { display: none; }
+    /* === MENÚ DE NAVEGACIÓN (radio como pills) === */
+    div[role="radiogroup"] { gap: 4px; flex-wrap: wrap; border-bottom: 1px solid #eee; padding-bottom: 0.5rem; margin-bottom: 0.5rem; }
+    div[role="radiogroup"] > label { background: #f5f5f5; color: #666; padding: 0.4rem 0.9rem; border-radius: 6px; font-weight: 500; font-size: 0.88rem; letter-spacing: 0.3px; margin: 0 !important; cursor: pointer; transition: background 0.15s; }
+    div[role="radiogroup"] > label:hover { background: #EEEEEE; }
+    div[role="radiogroup"] > label:has(input:checked) { background: #E8F5E9; }
+    div[role="radiogroup"] > label:has(input:checked) div { color: #1B5E20 !important; }
+    div[role="radiogroup"] > label > div:first-child { display: none; }
     /* === KPI CARDS === */
     .kpi-card { background: #f8f8f8; border-radius: 10px; padding: 1rem 1.2rem; text-align: center; min-height: 240px; position: relative; overflow: hidden; border: none; box-shadow: none; border-left: none; }
     .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 10px 10px 0 0; }
@@ -973,10 +987,11 @@ for _k, _v in _ss_defaults.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
-tab1,tab2,tab6,tab7,tab5,tab4,tab8,tab9 = st.tabs(["TABLERO","DINÁMICA","CONSUMO","STOCK","HISTÓRICA","SUPERFICIES","MAPA","NOTAS"])
+SECCIONES = ["TABLERO","DINÁMICA","CONSUMO","STOCK","HISTÓRICA","SUPERFICIES","MAPA","NOTAS"]
+seccion = st.radio("Sección", SECCIONES, horizontal=True, key="seccion_activa", label_visibility="collapsed")
 
 # TAB 1
-with tab1:
+if seccion == "TABLERO":
     btn_actualizar()
     st.markdown(f'<div class="section-title">PPNA POR ESTABLECIMIENTO — {MESES_ES.get(um,"")} {ua} · Campaña {camp_act}</div>', unsafe_allow_html=True)
     st.caption("Información satelital · Tasas de crecimiento diarias")
@@ -1136,9 +1151,8 @@ with tab1:
         st.markdown(f'<div class="metric-card"><div class="mc-label">Cosecha promedio</div><div class="mc-value">{fnum(_cosecha_prom)}</div><div class="mc-sub">kgMS/ha útil</div></div>', unsafe_allow_html=True)
 
 # TAB 2
-with tab2:
+elif seccion == "DINÁMICA":
     btn_actualizar()
-    @st.fragment
     def _tab2_render():
         st.markdown('<div class="section-title">DINÁMICA DE RECURSOS FORRAJEROS</div>', unsafe_allow_html=True)
         cf1,cf2,_ = st.columns([2,2,4])
@@ -1277,9 +1291,8 @@ with tab2:
     _tab2_render()
 
 # TAB 4
-with tab4:
+elif seccion == "SUPERFICIES":
     btn_actualizar()
-    @st.fragment
     def _tab4_render():
         st.markdown('<div class="section-title">MATRIZ DE SUPERFICIES Y COBERTURA</div>', unsafe_allow_html=True)
         st.caption("**Superficie total:** superficie total del potrero · **Superficie útil:** superficie total descontando el monte · **Superficie efectiva:** superficie útil descontando renoval y suelo desnudo")
@@ -1315,9 +1328,8 @@ with tab4:
     _tab4_render()
 
 # TAB 5
-with tab5:
+elif seccion == "HISTÓRICA":
     btn_actualizar()
-    @st.fragment
     def _tab5_render():
         st.markdown('<div class="section-title">PRODUCTIVIDAD HISTÓRICA</div>', unsafe_allow_html=True)
         st.caption("Estadísticas por potrero y campo calculadas sobre todas las campañas disponibles.")
@@ -1471,9 +1483,8 @@ with tab5:
     _tab5_render()
 
 # TAB 6 — CONSUMO
-with tab6:
+elif seccion == "CONSUMO":
     btn_actualizar()
-    @st.fragment
     def _tab6_render():
         if df_consumo.empty:
             st.warning("No se encontró ningún archivo de consumo en la carpeta BBDD_consumos_zed.")
@@ -1706,9 +1717,8 @@ with tab6:
     _tab6_render()
 
 # TAB 7 — STOCK FORRAJERO
-with tab7:
+elif seccion == "STOCK":
     btn_actualizar()
-    @st.fragment
     def _tab7_render():
         st.markdown('<div class="section-title">STOCK FORRAJERO</div>', unsafe_allow_html=True)
         st.caption("Stock = Stock anterior + Producción (PPNA) − Consumo. Acumulado mes a mes a lo largo de la campaña.")
@@ -2363,9 +2373,8 @@ with tab7:
     _tab7_render()
 
 # TAB 8 — MAPA DE STOCK
-with tab8:
+elif seccion == "MAPA":
     btn_actualizar()
-    @st.fragment
     def _tab8_render():
         st.markdown('<div class="section-title">MAPA DE STOCK DISPONIBLE</div>', unsafe_allow_html=True)
         st.caption("Stock por potrero sobre imagen satelital. Color relativo al promedio de stock del establecimiento.")
@@ -2818,9 +2827,9 @@ def _tab9_render():
                            file_name=st.session_state.get("pdf_nombre", "cuaderno.pdf"),
                            mime="application/pdf", key="pdf_download")
 
-with tab9:
+if seccion == "NOTAS":
     _tab9_render()
 
 
 st.markdown("")
-st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v4.3 · — DON TITO —</div>', unsafe_allow_html=True)
+st.markdown('<div style="text-align:center;color:#bbb;font-size:0.75rem;padding:0.5rem 0;">Seguimiento Forrajero ZED · v5.0 · — DON TITO —</div>', unsafe_allow_html=True)
